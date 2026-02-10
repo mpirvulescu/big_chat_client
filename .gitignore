@@ -1,0 +1,36 @@
+# --- Build Artifacts ---
+# Ignore the entire build directory where CMake generates files
+build/
+bin/
+obj/
+
+# --- CMake Generated Files ---
+# If you ever run cmake in the root instead of the build folder
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
+
+# --- Compiled Binaries ---
+# Ignore any executables (usually named after your project or main.c)
+*.out
+*.exe
+*.app
+main
+big_chat_client
+
+# --- IDE & Editor Specific ---
+# VS Code
+.vscode/
+# CLion / JetBrains
+.idea/
+# Vim swap files
+*.swp
+# macOS specific
+.DS_Store
+
+# --- Logs & Temporary Files ---
+*.log
+*.tmp
