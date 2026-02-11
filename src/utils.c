@@ -1,6 +1,7 @@
 #include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 void cleanup_client(client_context *ctx) {
@@ -25,4 +26,29 @@ void quit(client_context *ctx) {
     fputs(ctx->exit_message, stderr);
   }
   exit(ctx->exit_code);
+}
+
+// ai helped me with this cuz darcys flags kept screaming at me
+void get_user_input(char *dest, size_t size, const char *prompt) {
+  if (prompt) {
+    printf("%s", prompt);
+    fflush(stdout);
+  }
+
+  if (size == 0 || dest == NULL) {
+    return;
+  }
+
+  if (fgets(dest, (int)size, stdin) != NULL) {
+    // Look for the newline character manually.
+    // This avoids "tainted index" warnings from strcspn.
+    for (size_t i = 0; i < size && dest[i] != '\0'; i++) {
+      if (dest[i] == '\n') {
+        dest[i] = '\0';
+        break;
+      }
+    }
+  } else {
+    dest[0] = '\0';
+  }
 }

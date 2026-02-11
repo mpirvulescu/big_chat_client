@@ -13,8 +13,9 @@ static client_context init_context(void);
 static void parse_arguments(client_context *ctx);
 static void handle_arguments(client_context *ctx);
 static int run_discovery_phase(client_context *ctx);
-static int run_login_phase(client_context *ctx);
-static int run_logout_phase(client_context *ctx);
+static int run_account_creation_phase(client_context *ctx);
+static int run_login_phase(client_context *ctx);  // STILL NEED
+static int run_logout_phase(client_context *ctx); // STILL NEED
 
 int main(int argc, char **argv) {
   client_context ctx;
@@ -26,7 +27,11 @@ int main(int argc, char **argv) {
   parse_arguments(&ctx);
   handle_arguments(&ctx);
 
+  // find the fucking server
   run_discovery_phase(&ctx);
+
+  // create the damn account
+  run_account_creation_phase(&ctx);
 
   quit(&ctx);
 
@@ -123,9 +128,39 @@ static void handle_arguments(client_context *ctx) {
 static int run_discovery_phase(client_context *ctx) {
   ctx->state = STATE_DISCOVERING;
 
-  // This function lives in network_funcs.c
-  // If it fails, it calls quit() internally, so if we return, we succeeded.
   network_execute_discovery(ctx);
 
+  return 0;
+}
+
+static int run_account_creation_phase(client_context *ctx) {
+  ctx->state = STATE_CONNECTING_TO_SERVER;
+
+  printf("\n[Account Creation]\n");
+  get_user_input(ctx->username, sizeof(ctx->username), "Enter Username: ");
+  get_user_input(ctx->password, sizeof(ctx->password), "Enter Password: ");
+
+  // username loop
+  while (1) {
+    get_user_input(ctx->username, sizeof(ctx->username), "Enter Username: ");
+    if (strlen(ctx->username) > 0) {
+      break; // input is valid
+    }
+    printf("Error: Username cannot be empty. Please try again.\n");
+  }
+
+  // password loop
+  while (1) {
+    get_user_input(ctx->password, sizeof(ctx->password), "Enter Password: ");
+    if (strlen(ctx->password) > 0) {
+      break; // input is valid
+    }
+    printf("Error: Password cannot be empty. Please try again.\n");
+  }
+
+  // call network layer to do the handshake
+  network_execute_account_creation(ctx);
+
+  ctx->state = STATE_LOGGED_IN;
   return 0;
 }
