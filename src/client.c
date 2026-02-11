@@ -137,8 +137,9 @@ static int run_account_creation_phase(client_context *ctx) {
   ctx->state = STATE_CONNECTING_TO_SERVER;
 
   printf("\n[Account Creation]\n");
-  get_user_input(ctx->username, sizeof(ctx->username), "Enter Username: ");
-  get_user_input(ctx->password, sizeof(ctx->password), "Enter Password: ");
+  // disable to prevent double account setup loop
+  // get_user_input(ctx->username, sizeof(ctx->username), "Enter Username: ");
+  // get_user_input(ctx->password, sizeof(ctx->password), "Enter Password: ");
 
   // username loop
   while (1) {
