@@ -151,11 +151,19 @@ static void send_discovery_request(client_context *ctx) {
                       .type = TYPE_DISCOVERY_REQUEST,
                       .status = 0,
                       .padding = 0,
-                      .body_size = 0};
-
+                      .body_size = htonl(5)}; // hardcodes for now, 0 was
+                                              // redirecting us to 0.0.0.0 for
+                                              // available servers Refer to spec
+  big_discovery_res_t body = {0};
+  // send header
   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
     perror("send");
     fatal_error(ctx, "Network Error: Failed to send discovery request.\n");
+  }
+  // send body
+  if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
+    perror("send");
+    fatal_error(ctx, "Network Error: Failed to send discovery body.\n");
   }
 }
 
