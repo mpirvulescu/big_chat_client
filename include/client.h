@@ -11,8 +11,8 @@ enum
 
 enum 
 {
-    USERNAME_LENGTH = 32,
-    PASSWORD_LENGTH = 32,
+    USERNAME_LENGTH = 16,
+    PASSWORD_LENGTH = 16,
 };
 
 typedef enum 
