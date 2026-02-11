@@ -22,7 +22,7 @@ typedef struct  {
 } big_header_t;
 
 //  body for discovery response (Type 0x0B)
-typedef struct __attribute__((packed)) {
+typedef struct {
     uint32_t ip_address;
     uint8_t  server_id;  
 } big_discovery_res_t;

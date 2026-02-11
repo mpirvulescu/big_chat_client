@@ -1,4 +1,5 @@
 #include "client.h"
+#include "utils.h"
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
@@ -11,7 +12,8 @@ static client_context init_context(void);
 static void parse_arguments(client_context *ctx);
 static void handle_arguments(client_context *ctx);
 static int run_discovery_phase(client_context *ctx);
-static int run_authentication_phase(client_context *ctx);
+static int run_login_phase(client_context *ctx);
+static int run_logout_phase(client_context *ctx);
 
 int main(int argc, char **argv) {
   client_context ctx;
@@ -63,22 +65,27 @@ static void parse_arguments(client_context *ctx) {
         if (errno != 0 || *endptr != '\0' || port > UINT16_MAX) {
           fprintf(stderr, "Error: Invalid port '%s'. Range: 1-65535.\n",
                   optarg);
-          exit(EXIT_FAILURE);
+          ctx->exit_code = EXIT_FAILURE;
+          print_usage(ctx);
         }
         ctx->manager_port = (uint16_t)port;
       }
       break;
     case 'h':
       printf("Usage: %s -m <manager_ip> -p <manager_port>\n", ctx->argv[0]);
-      exit(EXIT_SUCCESS);
+      ctx->exit_code = EXIT_SUCCESS;
+      print_usage(ctx);
     case ':':
       fprintf(stderr, "Error: Option '-%c' requires an argument.\n", optopt);
-      exit(EXIT_FAILURE);
+      ctx->exit_code = EXIT_FAILURE;
+      print_usage(ctx);
     case '?':
       fprintf(stderr, "Error: Unknown option '-%c'.\n", optopt);
-      exit(EXIT_FAILURE);
+      ctx->exit_code = EXIT_FAILURE;
+      print_usage(ctx);
     default:
-      exit(EXIT_FAILURE);
+      ctx->exit_code = EXIT_FAILURE;
+      print_usage(ctx);
     }
   }
 }
@@ -86,23 +93,24 @@ static void parse_arguments(client_context *ctx) {
 static void handle_arguments(client_context *ctx) {
   if (ctx->manager_ip[0] == '\0') {
     fprintf(stderr, "Error: Manager IP (-m) must be specified.\n");
-    exit(EXIT_FAILURE);
+    ctx->exit_code = EXIT_FAILURE;
+    print_usage(ctx);
   }
 
   if (ctx->manager_port == 0) {
     fprintf(stderr, "Error: Manager Port (-p) must be specified.\n");
-    exit(EXIT_FAILURE);
+    ctx->exit_code = EXIT_FAILURE;
+    print_usage(ctx);
   }
 
   struct in_addr addr;
   if (inet_pton(AF_INET, ctx->manager_ip, &addr) != 1) {
     fprintf(stderr, "Error: '%s' is not a valid IPv4 address.\n",
             ctx->manager_ip);
-    exit(EXIT_FAILURE);
+    ctx->exit_code = EXIT_FAILURE;
+    print_usage(ctx);
   }
 
   printf("client is ready for discovery via %s:%u\n", ctx->manager_ip,
          ctx->manager_port);
 }
-
-

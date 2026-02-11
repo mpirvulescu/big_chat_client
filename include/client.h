@@ -31,7 +31,7 @@ typedef struct
     char **argv;
 
     int exit_code;
-    int *exit_message;
+    char *exit_message;
 
     client_state state; //keep track of where we're at
     int active_sock_fd; //the active socket (gonna switch from manager to chat)
