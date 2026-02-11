@@ -211,7 +211,7 @@ static void send_account_creation_request(client_context *ctx) {
   strncpy(body.password, ctx->password, sizeof(body.password));
 
   body.client_id = 0; // 0 for new account?
-  body.status = 0x01; // as per protocol
+  // body.status = 0x01; // as per protocol // DG: disabling for now
 
   big_header_t req = {
       .version = BIG_CHAT_VERSION,

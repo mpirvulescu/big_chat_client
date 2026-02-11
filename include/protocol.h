@@ -36,7 +36,7 @@ typedef struct __attribute__((packed)) {
     char     username[USERNAME_LENGTH];
     char     password[PASSWORD_LENGTH];
     uint8_t  client_id;
-    uint8_t  status; // 0x01 for create?
+    // uint8_t  status; // 0x01 for create?  // DG: I am removing this for now to match spec
 } big_create_account_req_t;
 
 #endif
