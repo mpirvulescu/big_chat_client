@@ -1,13 +1,20 @@
 #include "network_funcs.h"
 #include "protocol.h"
+#include "utils.h"
 #include <arpa/inet.h>
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+// helper for fatal errors
+static void fatal_error(client_context *ctx, char *msg);
+
 // these two for network_execute_discovery
-static int send_discovery_request(int fd);
-static int recv_discovery_response(int fd, big_discovery_res_t *dest);
+static void send_discovery_request(client_context *ctx);
+static void recv_discovery_response(client_context *ctx,
+                                    big_discovery_res_t *dest);
 
 int convert_address(client_context *ctx) {
   memset(&ctx->addr, 0, sizeof(ctx->addr));
@@ -21,19 +28,145 @@ int convert_address(client_context *ctx) {
   return -1;
 }
 
-// int socket_create(client_context *ctx) { ctx->active_sock_fd = socket() }
+void socket_create(client_context *ctx) {
+  ctx->active_sock_fd = socket(ctx->addr.ss_family, SOCK_STREAM, 0);
 
-// add the socket shit from networkfuncs.h
-int network_execute_discovery(client_context *ctx) {}
-int network_execute_login(client_context *ctx) {}
-
-static int send_discovery_request(int fd) {
-  big_header_t request = {.version = BIG_CHAT_VERSION,
-                          .type = TYPE_DISCOVERY_REQUEST,
-                          .status = 0,
-                          .padding = 0,
-                          .body_size = 0};
-
-  // if ()
+  if (ctx->active_sock_fd == -1) {
+    perror("socket");
+    fatal_error(ctx, "Fatal: Could not create socket.\n");
+  }
 }
-static int recv_discovery_response(int fd, big_discovery_res_t *dest) {}
+
+void socket_connect(client_context *ctx, uint16_t port) {
+  char addr_str[INET_ADDRSTRLEN];
+  in_port_t net_port;
+  socklen_t addr_len;
+
+  // get the pointer to the IPv4 address
+  struct sockaddr_in *ipv4_ptr = (struct sockaddr_in *)&ctx->addr;
+
+  // convert IP to string for logging
+  if (inet_ntop(AF_INET, &(ipv4_ptr->sin_addr), addr_str, sizeof(addr_str)) ==
+      NULL) {
+    perror("inet_ntop");
+    fatal_error(ctx, "Fatal: internal address error.\n");
+  }
+
+  printf("Connecting to: %s:%u\n", addr_str, port);
+
+  // convert port to network byte order
+  net_port = htons(port);
+  ipv4_ptr->sin_port = net_port;
+  addr_len = sizeof(struct sockaddr_in);
+
+  // connection call
+  if (connect(ctx->active_sock_fd, (struct sockaddr *)ipv4_ptr, addr_len) ==
+      -1) {
+    fprintf(stderr, "Error: connect (%d): %s\n", errno, strerror(errno));
+    fatal_error(ctx, "Fatal: Could not connect to server.\n");
+  }
+
+  printf("Successfully connected to: %s:%u\n", addr_str, port);
+}
+
+void network_execute_discovery(client_context *ctx) {
+  printf("\n--- Phase 1: Server Discovery ---\n");
+
+  // setup connection to manager
+  if (convert_address(ctx) != 0) {
+    fatal_error(ctx, "Invalid Manager IP format.\n");
+  }
+
+  socket_create(ctx);
+
+  // connect using manager port
+  socket_connect(ctx, ctx->manager_port);
+
+  // protocol exchange
+  send_discovery_request(ctx);
+
+  // ai helped with this
+  big_discovery_res_t response;
+  recv_discovery_response(ctx, &response);
+
+  // handle the jump to server
+  struct in_addr node_ip_addr;
+  node_ip_addr.s_addr = response.ip_address;
+
+  char node_ip_str[INET_ADDRSTRLEN];
+  if (inet_ntop(AF_INET, &node_ip_addr, node_ip_str, sizeof(node_ip_str)) ==
+      NULL) {
+    fatal_error(ctx, "Discovery Error: Invalid IP received from Manager.\n");
+  }
+
+  printf("Redirecting to Chat Node %d at %s\n", response.server_id,
+         node_ip_str);
+
+  // overwrite manager IP with new chat node IP
+  snprintf(ctx->manager_ip, sizeof(ctx->manager_ip), "%s", node_ip_str);
+
+  // clean up manager socket
+  close(ctx->active_sock_fd);
+  ctx->active_sock_fd = -1;
+
+  // update the state
+  ctx->state = STATE_AWAITING_USER_INFO;
+}
+
+// void network_execute_login(client_context *ctx) {}
+
+static void send_discovery_request(client_context *ctx) {
+  big_header_t req = {.version = BIG_CHAT_VERSION,
+                      .type = TYPE_DISCOVERY_REQUEST,
+                      .status = 0,
+                      .padding = 0,
+                      .body_size = 0};
+
+  if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+    perror("send");
+    fatal_error(ctx, "Network Error: Failed to send discovery request.\n");
+  }
+}
+
+static void recv_discovery_response(client_context *ctx,
+                                    big_discovery_res_t *dest) {
+  big_header_t hdr;
+
+  // read header
+  ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
+
+  if (recvd == 0) {
+    fatal_error(ctx, "Server closed connection unexpectedly.\n");
+  }
+
+  if (recvd != sizeof(hdr)) {
+    fatal_error(ctx, "Failed to receive protocol header.\n");
+  }
+
+  // validate packet
+  if (hdr.type != TYPE_DISCOVERY_RESPONSE) {
+    fatal_error(ctx, "Protocol Error: Invalid response type from Manager.\n");
+  }
+
+  // convert from network order to host order
+  uint32_t body_len = ntohl(hdr.body_size);
+  if (body_len != sizeof(big_discovery_res_t)) {
+    fprintf(stderr, "Protocol Error: Expected body size %zu, got %u\n",
+            sizeof(big_discovery_res_t), body_len);
+    fatal_error(ctx, "Invalid discovery response size.\n");
+  }
+
+  // read body into dest
+  recvd =
+      recv(ctx->active_sock_fd, dest, sizeof(big_discovery_res_t), MSG_WAITALL);
+
+  if (recvd != sizeof(big_discovery_res_t)) {
+    fatal_error(ctx, "Failed to receive discovery body.\n");
+  }
+}
+
+static void fatal_error(client_context *ctx, char *msg) {
+  ctx->exit_code = EXIT_FAILURE;
+  ctx->exit_message = msg;
+  quit(ctx);
+}

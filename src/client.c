@@ -1,4 +1,5 @@
 #include "client.h"
+#include "network_funcs.h"
 #include "utils.h"
 #include <errno.h>
 #include <getopt.h>
@@ -24,6 +25,10 @@ int main(int argc, char **argv) {
 
   parse_arguments(&ctx);
   handle_arguments(&ctx);
+
+  run_discovery_phase(&ctx);
+
+  quit(&ctx);
 
   return EXIT_SUCCESS;
 }
@@ -103,14 +108,24 @@ static void handle_arguments(client_context *ctx) {
     print_usage(ctx);
   }
 
-  struct in_addr addr;
-  if (inet_pton(AF_INET, ctx->manager_ip, &addr) != 1) {
-    fprintf(stderr, "Error: '%s' is not a valid IPv4 address.\n",
-            ctx->manager_ip);
-    ctx->exit_code = EXIT_FAILURE;
-    print_usage(ctx);
-  }
+  //   struct in_addr addr;
+  //   if (inet_pton(AF_INET, ctx->manager_ip, &addr) != 1) {
+  //     fprintf(stderr, "Error: '%s' is not a valid IPv4 address.\n",
+  //             ctx->manager_ip);
+  //     ctx->exit_code = EXIT_FAILURE;
+  //     print_usage(ctx);
+  //   }
 
   printf("client is ready for discovery via %s:%u\n", ctx->manager_ip,
          ctx->manager_port);
+}
+
+static int run_discovery_phase(client_context *ctx) {
+  ctx->state = STATE_DISCOVERING;
+
+  // This function lives in network_funcs.c
+  // If it fails, it calls quit() internally, so if we return, we succeeded.
+  network_execute_discovery(ctx);
+
+  return 0;
 }
