@@ -6,8 +6,8 @@
 typedef enum 
 {
     BIG_CHAT_VERSION = 0x01,
-    TYPE_DISCOVERY_REQ       = 0x0A,
-    TYPE_DISCOVERY_RES       = 0x0B,
+    TYPE_DISCOVERY_REQUEST       = 0x0A,
+    TYPE_DISCOVERY_RESPONSE       = 0x0B,
     TYPE_LOGIN_OR_LOGOUT_REQ = 0x15
 } big_chat_message_t;
 
