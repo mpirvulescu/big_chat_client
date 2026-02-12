@@ -313,7 +313,7 @@ static void send_login_logout_request(client_context *ctx,
                                       uint8_t status_flag) {
   big_login_logout_req_t body = {0};
 
-  strncpy(body.password, ctx->password, sizeof(body.password));
+  strncpy(body.password, ctx->password, sizeof(body.password)); // fix this retard @DSG
   body.account_id = ctx->account_id;
   body.status = status_flag;
 
