@@ -39,4 +39,12 @@ typedef struct __attribute__((packed)) {
     // uint8_t  status; // 0x01 for create?  // DG: I am removing this for now to match spec
 } big_create_account_req_t;
 
+//body for login/logout (type 0x14)
+typedef struct __attribute__((packed)) {
+    char     password[PASSWORD_LENGTH];  // 16 bytes
+    uint8_t  account_id;                 // 1 byte
+    uint8_t  status;                     // 1 byte (1=login, 0=logout)
+    uint32_t client_ip;                  // 4 bytes (network byte order)
+} big_login_logout_req_t;
+
 #endif
