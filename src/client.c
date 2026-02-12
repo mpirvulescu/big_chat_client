@@ -14,8 +14,8 @@ static void parse_arguments(client_context *ctx);
 static void handle_arguments(client_context *ctx);
 static int run_discovery_phase(client_context *ctx);
 static int run_account_creation_phase(client_context *ctx);
-static int run_login_phase(client_context *ctx);  // STILL NEED
-static int run_logout_phase(client_context *ctx); // STILL NEED
+static int run_login_phase(client_context *ctx);
+static int run_logout_phase(client_context *ctx);
 
 int main(int argc, char **argv) {
   client_context ctx;
@@ -32,6 +32,10 @@ int main(int argc, char **argv) {
 
   // create the damn account
   run_account_creation_phase(&ctx);
+
+  // login and logout with the chat server
+  run_login_phase(&ctx);
+  run_logout_phase(&ctx);
 
   quit(&ctx);
 
@@ -163,5 +167,17 @@ static int run_account_creation_phase(client_context *ctx) {
   network_execute_account_creation(ctx);
 
   ctx->state = STATE_LOGGED_IN;
+  return 0;
+}
+
+static int run_login_phase(client_context *ctx) {
+  ctx->state = STATE_LOGGED_IN;
+  network_execute_login(ctx);
+  return 0;
+}
+
+static int run_logout_phase(client_context *ctx) {
+  ctx->state = STATE_EXITING;
+  network_execute_logout(ctx);
   return 0;
 }
