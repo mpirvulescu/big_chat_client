@@ -20,6 +20,10 @@ static void recv_discovery_response(client_context *ctx,
 static void send_account_creation_request(client_context *ctx);
 static void recv_account_creation_response(client_context *ctx);
 
+// helpers for login/logout
+static void send_login_logout_request(client_context *ctx, uint8_t status_flag);
+static void recv_login_logout_response(client_context *ctx);
+
 int convert_address(client_context *ctx) {
   memset(&ctx->addr, 0, sizeof(ctx->addr));
 
@@ -259,14 +263,29 @@ static void recv_account_creation_response(client_context *ctx) {
   }
 
   // consume any body if the server sent one (protocol says response might have
-  // body)
+  // body) *** READY FOR REMOVAL @DSG
+
+  // parse response body to get assigned account ID
   uint32_t bsize = ntohl(hdr.body_size);
-  if (bsize > 0) {
+  if (bsize == sizeof(big_create_account_req_t)) {
+    big_create_account_req_t resp_body;
+
+    ssize_t recvd_body =
+        recv(ctx->active_sock_fd, &resp_body, sizeof(resp_body), MSG_WAITALL);
+
+    if (recvd_body != (ssize_t)sizeof(resp_body)) {
+      fatal_error(ctx, "Failed to read registration response body.\n");
+    }
+
+    ctx->account_id = resp_body.client_id;
+    printf("Assigned account ID: %u\n", ctx->account_id);
+
+  } else if (bsize > 0) {
     char *junk = malloc(bsize);
 
     if (junk == NULL) {
       fatal_error(ctx, "Fatal: Out of memory.\n");
-      return; // darcys build needs this for some reason
+      return;
     }
 
     // Cast bsize to size_t to match the function signature exactly
@@ -286,4 +305,123 @@ static void fatal_error(client_context *ctx, char *msg) {
   ctx->exit_code = EXIT_FAILURE;
   ctx->exit_message = msg;
   quit(ctx);
+}
+
+// get actual client IP from the connected socket
+static void send_login_logout_request(client_context *ctx, uint8_t status_flag) {
+  big_login_logout_req_t body = {0};
+
+  strncpy(body.password, ctx->password, sizeof(body.password));
+  body.account_id = ctx->account_id;
+  body.status = status_flag;
+
+  struct sockaddr_in local_addr;
+  socklen_t addr_len = sizeof(local_addr);
+  if (getsockname(ctx->active_sock_fd, (struct sockaddr *)&local_addr, &addr_len) == -1) {
+    fatal_error(ctx, "Failed to get local socket address.\n");
+  }
+  body.client_ip = local_addr.sin_addr.s_addr;  // already network byte order
+
+  big_header_t req = {
+    .version = BIG_CHAT_VERSION,
+    .type = TYPE_LOGIN_REQUEST,
+    .status = 0,
+    .padding = 0,
+    .body_size = htonl(sizeof(body))
+  };
+
+  // send header
+  if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+    fatal_error(ctx, "Network Error: Failed to send login header.\n");
+  }
+
+  // send body
+  if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
+    fatal_error(ctx, "Network Error: Failed to send login body.\n");
+  }
+}
+
+// any non-zero status is fatal (ok=0x00, senderError=0x10, receiverError=0x20)
+static void recv_login_logout_response(client_context *ctx) {
+  big_header_t hdr;
+
+  ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
+
+  if (recvd <= 0) {
+    fatal_error(ctx, "Server disconnected during login.\n");
+  }
+
+  if (recvd != sizeof(hdr)) {
+    fatal_error(ctx, "Incomplete login response.\n");
+  }
+
+  if (hdr.type != TYPE_LOGIN_RESPONSE) {
+    fatal_error(ctx, "Protocol Error: Unexpected response type.\n");
+  }
+
+  if (hdr.status != 0x00) {
+    fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
+    fatal_error(ctx, "Login/Logout Failed: Server returned error.\n");
+  }
+
+  // drain any response body
+  uint32_t bsize = ntohl(hdr.body_size);
+  if (bsize > 0) {
+    char *junk = malloc(bsize);
+
+    if (junk == NULL) {
+      fatal_error(ctx, "Fatal: Out of memory.\n");
+      return;
+    }
+
+    ssize_t recvd_body =
+        recv(ctx->active_sock_fd, junk, (size_t)bsize, MSG_WAITALL);
+
+    if (recvd_body != (ssize_t)bsize) {
+      free(junk);
+      fatal_error(ctx, "Failed to read login response body.\n");
+      return;
+    }
+    free(junk);
+  }
+}
+
+void network_execute_login(client_context *ctx) {
+  printf("\n--- Phase 3: Login ---\n");
+
+  if (convert_address(ctx) != 0) {
+    fatal_error(ctx, "Invalid Server IP format.\n");
+  }
+
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+
+  send_login_logout_request(ctx, 1);
+  recv_login_logout_response(ctx);
+
+  // cleanup connection
+  close(ctx->active_sock_fd);
+  ctx->active_sock_fd = -1;
+
+  printf("Login Successful.\n");
+}
+
+void network_execute_logout(client_context *ctx) {
+  printf("\n--- Phase 4: Logout ---\n");
+
+  if (convert_address(ctx) != 0) {
+    fatal_error(ctx, "Invalid Server IP format.\n");
+  }
+
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+
+  send_login_logout_request(ctx, 0);
+  recv_login_logout_response(ctx);
+
+  // cleanup connection
+  close(ctx->active_sock_fd);
+  ctx->active_sock_fd = -1;
+
+  printf("Logout Successful.\n");
 }
