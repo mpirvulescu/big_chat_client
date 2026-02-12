@@ -31,7 +31,7 @@ set(main_HEADERS
         include/client.h
         include/network_funcs.h
         include/protocol.h
-        include utils.h
+        include/utils.h
 )
 
 set(main_LINK_LIBRARIES "")

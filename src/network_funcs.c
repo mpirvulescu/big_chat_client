@@ -37,6 +37,7 @@ int convert_address(client_context *ctx) {
 }
 
 void socket_create(client_context *ctx) {
+  // NOLINTNEXTLINE(android-cloexec-socket)
   ctx->active_sock_fd = socket(ctx->addr.ss_family, SOCK_STREAM, 0);
 
   if (ctx->active_sock_fd == -1) {
@@ -308,7 +309,8 @@ static void fatal_error(client_context *ctx, char *msg) {
 }
 
 // get actual client IP from the connected socket
-static void send_login_logout_request(client_context *ctx, uint8_t status_flag) {
+static void send_login_logout_request(client_context *ctx,
+                                      uint8_t status_flag) {
   big_login_logout_req_t body = {0};
 
   strncpy(body.password, ctx->password, sizeof(body.password));
@@ -317,18 +319,17 @@ static void send_login_logout_request(client_context *ctx, uint8_t status_flag) 
 
   struct sockaddr_in local_addr;
   socklen_t addr_len = sizeof(local_addr);
-  if (getsockname(ctx->active_sock_fd, (struct sockaddr *)&local_addr, &addr_len) == -1) {
+  if (getsockname(ctx->active_sock_fd, (struct sockaddr *)&local_addr,
+                  &addr_len) == -1) {
     fatal_error(ctx, "Failed to get local socket address.\n");
   }
-  body.client_ip = local_addr.sin_addr.s_addr;  // already network byte order
+  body.client_ip = local_addr.sin_addr.s_addr; // already network byte order
 
-  big_header_t req = {
-    .version = BIG_CHAT_VERSION,
-    .type = TYPE_LOGIN_REQUEST,
-    .status = 0,
-    .padding = 0,
-    .body_size = htonl(sizeof(body))
-  };
+  big_header_t req = {.version = BIG_CHAT_VERSION,
+                      .type = TYPE_LOGIN_REQUEST,
+                      .status = 0,
+                      .padding = 0,
+                      .body_size = htonl(sizeof(body))};
 
   // send header
   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
