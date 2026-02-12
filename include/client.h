@@ -43,6 +43,7 @@ typedef struct
     // user credentials
     char username[USERNAME_LENGTH];
     char password[PASSWORD_LENGTH];
+    uint8_t account_id;
 
 } client_context;
 
