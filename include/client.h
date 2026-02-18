@@ -13,6 +13,7 @@ enum
 {
     USERNAME_LENGTH = 16,
     PASSWORD_LENGTH = 16,
+    CHANNEL_NAME_LENGTH = 16
 };
 
 typedef enum 
@@ -22,6 +23,7 @@ typedef enum
     STATE_CONNECTING_TO_SERVER,
     STATE_AWAITING_USER_INFO,
     STATE_LOGGED_IN,
+    STATE_MESSAGING,
     STATE_EXITING
 } client_state;
 

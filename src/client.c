@@ -35,6 +35,12 @@ int main(int argc, char **argv) {
 
   // login and logout with the chat server
   run_login_phase(&ctx);
+
+  // TO-DO
+  //  run_channel_phase(&ctx);
+
+  // run_messaging_phase(&ctx);
+
   run_logout_phase(&ctx);
 
   quit(&ctx);
@@ -175,6 +181,14 @@ static int run_login_phase(client_context *ctx) {
   network_execute_login(ctx);
   return 0;
 }
+
+// static int run_channel_phase(client_context) {
+
+// }
+
+// static int run_messaging_phase(client_context *ctx) {
+
+// }
 
 static int run_logout_phase(client_context *ctx) {
   ctx->state = STATE_EXITING;

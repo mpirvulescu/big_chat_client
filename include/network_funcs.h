@@ -4,6 +4,7 @@
 #include "client.h"
 #include <stdint.h>
 
+
 int convert_address(client_context *ctx);
 void socket_create(client_context *ctx);
 void socket_connect(client_context *ctx, uint16_t port);

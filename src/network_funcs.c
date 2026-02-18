@@ -1,4 +1,5 @@
 #include "network_funcs.h"
+#include "client.h"
 #include "protocol.h"
 #include "utils.h"
 #include <arpa/inet.h>
@@ -99,14 +100,17 @@ void network_execute_discovery(client_context *ctx) {
   recv_discovery_response(ctx, &response);
 
   // handle the jump to server
-  struct in_addr node_ip_addr;
-  node_ip_addr.s_addr = response.ip_address;
+  // struct in_addr node_ip_addr;
+  // node_ip_addr.s_addr = response.ip_address;
 
   char node_ip_str[INET_ADDRSTRLEN];
-  if (inet_ntop(AF_INET, &node_ip_addr, node_ip_str, sizeof(node_ip_str)) ==
-      NULL) {
-    fatal_error(ctx, "Discovery Error: Invalid IP received from Manager.\n");
-  }
+  snprintf(node_ip_str, sizeof(node_ip_str), "%u.%u.%u.%u",
+           response.ip_address.a, response.ip_address.b, response.ip_address.c,
+           response.ip_address.d);
+  // if (inet_ntop(AF_INET, &node_ip_addr, node_ip_str, sizeof(node_ip_str)) ==
+  //     NULL) {
+  //   fatal_error(ctx, "Discovery Error: Invalid IP received from Manager.\n");
+  // }
 
   printf("Redirecting to Chat Node %d at %s\n", response.server_id,
          node_ip_str);
@@ -149,17 +153,57 @@ void network_execute_account_creation(client_context *ctx) {
   printf("Registration Successful. Account created.\n");
 }
 
+void network_execute_login(client_context *ctx) {
+  printf("\n--- Phase 3: Login ---\n");
+
+  if (convert_address(ctx) != 0) {
+    fatal_error(ctx, "Invalid Server IP format.\n");
+  }
+
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+
+  send_login_logout_request(ctx, 1);
+  recv_login_logout_response(ctx);
+
+  // cleanup connection
+  close(ctx->active_sock_fd);
+  ctx->active_sock_fd = -1;
+
+  printf("Login Successful.\n");
+}
+
+void network_execute_logout(client_context *ctx) {
+  printf("\n--- Phase 4: Logout ---\n");
+
+  if (convert_address(ctx) != 0) {
+    fatal_error(ctx, "Invalid Server IP format.\n");
+  }
+
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+
+  send_login_logout_request(ctx, 0);
+  recv_login_logout_response(ctx);
+
+  // cleanup connection
+  close(ctx->active_sock_fd);
+  ctx->active_sock_fd = -1;
+
+  printf("Logout Successful.\n");
+}
+
 // void network_execute_login(client_context *ctx) {}
 
 static void send_discovery_request(client_context *ctx) {
+  big_discovery_res_t body = {0};
+
   big_header_t req = {.version = BIG_CHAT_VERSION,
                       .type = TYPE_DISCOVERY_REQUEST,
                       .status = 0,
-                      .padding = 0,
-                      .body_size = htonl(5)}; // hardcodes for now, 0 was
-                                              // redirecting us to 0.0.0.0 for
-                                              // available servers Refer to spec
-  big_discovery_res_t body = {0};
+                      .reserved = 0,
+                      .body = htonl(sizeof(body))};
+
   // send header
   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
     perror("send");
@@ -193,7 +237,7 @@ static void recv_discovery_response(client_context *ctx,
   }
 
   // convert from network order to host order
-  uint32_t body_len = ntohl(hdr.body_size);
+  uint32_t body_len = ntohl(hdr.body);
   if (body_len != sizeof(big_discovery_res_t)) {
     fprintf(stderr, "Protocol Error: Expected body size %zu, got %u\n",
             sizeof(big_discovery_res_t), body_len);
@@ -212,8 +256,10 @@ static void recv_discovery_response(client_context *ctx,
 static void send_account_creation_request(client_context *ctx) {
   big_create_account_req_t body = {0};
 
-  strncpy(body.username, ctx->username, sizeof(body.username));
-  strncpy(body.password, ctx->password, sizeof(body.password));
+  strncpy(body.authentication.username, ctx->username,
+          sizeof(body.authentication.username));
+  strncpy(body.authentication.password, ctx->password,
+          sizeof(body.authentication.password));
 
   body.client_id = 0; // 0 for new account?
   // body.status = 0x01; // as per protocol // DG: disabling for now
@@ -222,8 +268,8 @@ static void send_account_creation_request(client_context *ctx) {
       .version = BIG_CHAT_VERSION,
       .type = TYPE_ACCOUNT_CREATE_REQUEST,
       .status = 0,
-      .padding = 0,
-      .body_size = htonl(sizeof(body)) // worry about endianness i think
+      .reserved = 0,
+      .body = htonl(sizeof(body)) // worry about endianness i think
   };
 
   // send header
@@ -258,7 +304,7 @@ static void recv_account_creation_response(client_context *ctx) {
   if (hdr.status != 0x00) {
     fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
     // REMEMBER TO CLEAN UP THE MAGIC HEX NUMS
-    if (hdr.status == 0x20) { // NOLINT
+    if (hdr.status == 0x80) { // NOLINT
       fatal_error(ctx, "Registration Failed: Server Receiver Error.\n");
     }
   }
@@ -267,7 +313,7 @@ static void recv_account_creation_response(client_context *ctx) {
   // body) *** READY FOR REMOVAL @DSG
 
   // parse response body to get assigned account ID
-  uint32_t bsize = ntohl(hdr.body_size);
+  uint32_t bsize = ntohl(hdr.body);
   if (bsize == sizeof(big_create_account_req_t)) {
     big_create_account_req_t resp_body;
 
@@ -313,9 +359,14 @@ static void send_login_logout_request(client_context *ctx,
                                       uint8_t status_flag) {
   big_login_logout_req_t body = {0};
 
-  strncpy(body.password, ctx->password, sizeof(body.password)); // fix this retard @DSG
-  body.account_id = ctx->account_id;
+  strncpy(body.authentication.username, ctx->username, USERNAME_LENGTH);
+  strncpy(body.authentication.password, ctx->password, PASSWORD_LENGTH);
   body.status = status_flag;
+
+  // strncpy(body.password, ctx->password,
+  //         sizeof(body.password)); // fix this retard @DSG
+  // body.account_id = ctx->account_id;
+  // body.status = status_flag;
 
   struct sockaddr_in local_addr;
   socklen_t addr_len = sizeof(local_addr);
@@ -323,13 +374,16 @@ static void send_login_logout_request(client_context *ctx,
                   &addr_len) == -1) {
     fatal_error(ctx, "Failed to get local socket address.\n");
   }
-  body.client_ip = local_addr.sin_addr.s_addr; // already network byte order
+
+  memcpy(&body.client_ip, &local_addr.sin_addr.s_addr, sizeof(ipv4_address_t));
+
+  // body.client_ip = local_addr.sin_addr.s_addr; // already network byte order
 
   big_header_t req = {.version = BIG_CHAT_VERSION,
-                      .type = TYPE_LOGIN_REQUEST,
+                      .type = TYPE_LOGIN_OR_LOGOUT_REQUEST,
                       .status = 0,
-                      .padding = 0,
-                      .body_size = htonl(sizeof(body))};
+                      .reserved = 0,
+                      .body = htonl(sizeof(body))};
 
   // send header
   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
@@ -356,7 +410,7 @@ static void recv_login_logout_response(client_context *ctx) {
     fatal_error(ctx, "Incomplete login response.\n");
   }
 
-  if (hdr.type != TYPE_LOGIN_RESPONSE) {
+  if (hdr.type != TYPE_LOGIN_OR_LOGOUT_REQUEST) {
     fatal_error(ctx, "Protocol Error: Unexpected response type.\n");
   }
 
@@ -366,7 +420,7 @@ static void recv_login_logout_response(client_context *ctx) {
   }
 
   // drain any response body
-  uint32_t bsize = ntohl(hdr.body_size);
+  uint32_t bsize = ntohl(hdr.body);
   if (bsize > 0) {
     char *junk = malloc(bsize);
 
@@ -385,44 +439,4 @@ static void recv_login_logout_response(client_context *ctx) {
     }
     free(junk);
   }
-}
-
-void network_execute_login(client_context *ctx) {
-  printf("\n--- Phase 3: Login ---\n");
-
-  if (convert_address(ctx) != 0) {
-    fatal_error(ctx, "Invalid Server IP format.\n");
-  }
-
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
-
-  send_login_logout_request(ctx, 1);
-  recv_login_logout_response(ctx);
-
-  // cleanup connection
-  close(ctx->active_sock_fd);
-  ctx->active_sock_fd = -1;
-
-  printf("Login Successful.\n");
-}
-
-void network_execute_logout(client_context *ctx) {
-  printf("\n--- Phase 4: Logout ---\n");
-
-  if (convert_address(ctx) != 0) {
-    fatal_error(ctx, "Invalid Server IP format.\n");
-  }
-
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
-
-  send_login_logout_request(ctx, 0);
-  recv_login_logout_response(ctx);
-
-  // cleanup connection
-  close(ctx->active_sock_fd);
-  ctx->active_sock_fd = -1;
-
-  printf("Logout Successful.\n");
 }
