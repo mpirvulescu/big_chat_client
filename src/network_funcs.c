@@ -236,6 +236,12 @@ static void recv_discovery_response(client_context *ctx,
     fatal_error(ctx, "Protocol Error: Invalid response type from Manager.\n");
   }
 
+  // check status — RFC Section 4.3.5: response status MUST reflect result
+  if (hdr.status != STATUS_OK) {
+    fprintf(stderr, "Manager Error Code: 0x%02X\n", hdr.status);
+    fatal_error(ctx, "Discovery Failed: Manager returned error.\n");
+  }
+
   // convert from network order to host order
   uint32_t body_len = ntohl(hdr.body);
   if (body_len != sizeof(big_discovery_res_t)) {
@@ -300,12 +306,20 @@ static void recv_account_creation_response(client_context *ctx) {
     fatal_error(ctx, "Protocol Error: Unexpected response type.\n");
   }
 
-  // check status byte (0x00 is ok, anything else is error)
-  if (hdr.status != 0x00) {
+  // check status byte - any non-zero status is fatal (RFC Section 4.3)
+  // status byte enum in prtocol.h
+  if (hdr.status != STATUS_OK) {
     fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
-    // REMEMBER TO CLEAN UP THE MAGIC HEX NUMS
-    if (hdr.status == 0x80) { // NOLINT
-      fatal_error(ctx, "Registration Failed: Server Receiver Error.\n");
+    if (hdr.status == STATUS_ALREADY_EXISTS) {
+      fatal_error(ctx, "Registration Failed: Username already exists.\n");
+    } else if (hdr.status == STATUS_INVALID_CREDENTIALS) {
+      fatal_error(ctx, "Registration Failed: Invalid credentials.\n");
+    } else if (hdr.status == STATUS_NOT_FOUND) {
+      fatal_error(ctx, "Registration Failed: Resource not found.\n");
+    } else if (hdr.status == STATUS_INTERNAL_ERROR) {
+      fatal_error(ctx, "Registration Failed: Server internal error.\n");
+    } else {
+      fatal_error(ctx, "Registration Failed: Unknown server error.\n");
     }
   }
 
@@ -410,11 +424,11 @@ static void recv_login_logout_response(client_context *ctx) {
     fatal_error(ctx, "Incomplete login response.\n");
   }
 
-  if (hdr.type != TYPE_LOGIN_OR_LOGOUT_REQUEST) {
+  if (hdr.type != TYPE_LOGIN_OR_LOGOUT_RESPONSE) {
     fatal_error(ctx, "Protocol Error: Unexpected response type.\n");
   }
 
-  if (hdr.status != 0x00) {
+  if (hdr.status != STATUS_OK) {
     fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
     fatal_error(ctx, "Login/Logout Failed: Server returned error.\n");
   }
