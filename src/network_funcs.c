@@ -236,7 +236,8 @@ static void recv_discovery_response(client_context *ctx,
     fatal_error(ctx, "Protocol Error: Invalid response type from Manager.\n");
   }
 
-  // check status — RFC Section 4.3.5: response status MUST reflect result
+  // check status - RFC Section 4.3.5: response status MUST reflect result
+  // added to prevent code from parsing body if status NOT valid
   if (hdr.status != STATUS_OK) {
     fprintf(stderr, "Manager Error Code: 0x%02X\n", hdr.status);
     fatal_error(ctx, "Discovery Failed: Manager returned error.\n");
