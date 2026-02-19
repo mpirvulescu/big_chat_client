@@ -23,12 +23,16 @@ set(LIBRARY_TARGETS "")
 
 set(main_SOURCES
         src/client.c
+        src/channels.c
+        src/messaging.c
         src/network_funcs.c
         src/utils.c
 )
 
 set(main_HEADERS
         include/client.h
+        include/channels.h
+        include/messaging.h
         include/network_funcs.h
         include/protocol.h
         include/utils.h

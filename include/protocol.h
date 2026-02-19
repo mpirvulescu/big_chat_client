@@ -4,23 +4,51 @@
 #include "client.h"
 #include <stdint.h>
 
-typedef enum 
+// RFC Appendix A — all valid type bytes (Resource << 3 | Action << 1 | Direction)
+// Cross-checked against ASN.1 MessageType and hexpat Type enum
+typedef enum
 {
     BIG_CHAT_VERSION = 0x02,
-    TYPE_DISCOVERY_REQUEST       = 0x0A,
-    TYPE_DISCOVERY_RESPONSE       = 0x0B,
-    TYPE_ACCOUNT_CREATE_REQUEST  = 0x10,
-    TYPE_ACCOUNT_CREATE_RESPONSE  = 0x11,
-    TYPE_LOGIN_OR_LOGOUT_REQUEST           = 0x14,
-    TYPE_LOGIN_OR_LOGOUT_RESPONSE           = 0x15,
-    TYPE_GET_CHANNEL_INFO_REQUEST = 0x22,
-    TYPE_GET_CHANNEL_INFO_RESPONSE = 0x23,
-    TYPE_LIST_ALL_CHANNELS_REQUEST = 0x2A,
-    TYPE_LIST_ALL_CHANNELS_RESPONSE = 0x2B,
-    TYPE_SEND_MESSAGE_REQUEST = 0x30,
-    TYPE_SEND_MESSAGE_RESPONSE = 0x31, 
-    TYPE_GET_MESSAGE_REQUEST = 0x32,
-    TYPE_GET_MESSAGE_RESPONSE = 0x33
+
+    // Server Resource (RFC 6.1)
+    TYPE_SERVER_REGISTRATION_REQUEST   = 0x00,    // Server Create Request
+    TYPE_SERVER_REGISTRATION_RESPONSE  = 0x01,    // Server Create Response
+    TYPE_SERVER_HEALTH_CHECK_REQUEST   = 0x04,    // Server Update Request
+    TYPE_SERVER_HEALTH_CHECK_RESPONSE  = 0x05,    // Server Update Response
+
+    // ActivatedServer Resource (RFC 6.2)
+    TYPE_SERVER_ACTIVATION_REQUEST     = 0x08,    // ActivatedServer Create Request
+    TYPE_SERVER_ACTIVATION_RESPONSE    = 0x09,    // ActivatedServer Create Response
+    TYPE_DISCOVERY_REQUEST             = 0x0A,    // ActivatedServer Read Request
+    TYPE_DISCOVERY_RESPONSE            = 0x0B,    // ActivatedServer Read Response
+    TYPE_SERVER_DEACTIVATION_REQUEST   = 0x0E,    // ActivatedServer Delete Request
+    TYPE_SERVER_DEACTIVATION_RESPONSE  = 0x0F,    // ActivatedServer Delete Response
+
+    // User Resource (RFC 6.3)
+    TYPE_ACCOUNT_CREATE_REQUEST        = 0x10,    // User Create Request
+    TYPE_ACCOUNT_CREATE_RESPONSE       = 0x11,    // User Create Response
+    TYPE_GET_USER_INFO_REQUEST         = 0x12,    // User Read Request
+    TYPE_GET_USER_INFO_RESPONSE        = 0x13,    // User Read Response
+    TYPE_LOGIN_OR_LOGOUT_REQUEST       = 0x14,    // User Update Request
+    TYPE_LOGIN_OR_LOGOUT_RESPONSE      = 0x15,    // User Update Response
+
+    // Log Resource (RFC 6.4)
+    TYPE_LOG_REQUEST                   = 0x18,    // Log Create Request
+    TYPE_LOG_RESPONSE                  = 0x19,    // Log Create Response
+
+    // Channel Resource (RFC 6.5)
+    TYPE_GET_CHANNEL_INFO_REQUEST      = 0x22,    // Channel Read Request
+    TYPE_GET_CHANNEL_INFO_RESPONSE     = 0x23,    // Channel Read Response
+
+    // Channels Resource (RFC 6.6)
+    TYPE_LIST_ALL_CHANNELS_REQUEST     = 0x2A,    // Channels Read Request
+    TYPE_LIST_ALL_CHANNELS_RESPONSE    = 0x2B,    // Channels Read Response
+
+    // Message Resource (RFC 6.7)
+    TYPE_SEND_MESSAGE_REQUEST          = 0x30,    // Message Create Request
+    TYPE_SEND_MESSAGE_RESPONSE         = 0x31,    // Message Create Response
+    TYPE_GET_MESSAGE_REQUEST           = 0x32,    // Message Read Request
+    TYPE_GET_MESSAGE_RESPONSE          = 0x33     // Message Read Response
 } big_chat_message_t;
 
 // RFC Section 4.3 — Status codes

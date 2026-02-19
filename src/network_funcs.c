@@ -166,27 +166,24 @@ void network_execute_login(client_context *ctx) {
   send_login_logout_request(ctx, 1);
   recv_login_logout_response(ctx);
 
-  // cleanup connection
-  close(ctx->active_sock_fd);
-  ctx->active_sock_fd = -1;
+  // NOTE: do NOT close socket — persistent connection (RFC 7.1, RFC 3.2 para 6)
+  // Socket stays open for channel list, messaging loop, and logout
+  // Previously: close(ctx->active_sock_fd); ctx->active_sock_fd = -1;
 
   printf("Login Successful.\n");
 }
 
 void network_execute_logout(client_context *ctx) {
-  printf("\n--- Phase 4: Logout ---\n");
+  printf("\n--- Phase 6: Logout ---\n");
 
-  if (convert_address(ctx) != 0) {
-    fatal_error(ctx, "Invalid Server IP format.\n");
-  }
-
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
+  // NOTE: uses persistent connection from login (RFC 7.1)
+  // Previously reconnected here — removed because socket is already open
+  // from login → channel list → messaging loop
 
   send_login_logout_request(ctx, 0);
   recv_login_logout_response(ctx);
 
-  // cleanup connection
+  // NOW close the socket — end of persistent connection lifecycle
   close(ctx->active_sock_fd);
   ctx->active_sock_fd = -1;
 

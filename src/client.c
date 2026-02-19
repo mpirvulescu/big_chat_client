@@ -1,4 +1,6 @@
 #include "client.h"
+#include "channels.h"
+#include "messaging.h"
 #include "network_funcs.h"
 #include "utils.h"
 #include <errno.h>
@@ -15,6 +17,8 @@ static void handle_arguments(client_context *ctx);
 static int run_discovery_phase(client_context *ctx);
 static int run_account_creation_phase(client_context *ctx);
 static int run_login_phase(client_context *ctx);
+static int run_channel_phase(client_context *ctx);
+static int run_messaging_phase(client_context *ctx);
 static int run_logout_phase(client_context *ctx);
 
 int main(int argc, char **argv) {
@@ -27,20 +31,26 @@ int main(int argc, char **argv) {
   parse_arguments(&ctx);
   handle_arguments(&ctx);
 
-  // find the fucking server
+  // Phase 1: Discovery — connect to manager, get chat server IP, close
+  // (network_funcs.c:82)
   run_discovery_phase(&ctx);
 
-  // create the damn account
+  // Phase 2: Account Creation — connect to server, create account, close
+  // (network_funcs.c:129)
   run_account_creation_phase(&ctx);
 
-  // login and logout with the chat server
+  // Phase 3: Login — connect to server, login, KEEP OPEN (network_funcs.c:156)
+  // RFC 7.1: persistent connection from login through logout
   run_login_phase(&ctx);
 
-  // TO-DO
-  //  run_channel_phase(&ctx);
+  // Phase 4: Channel List — on persistent connection (channels.c)
+  run_channel_phase(&ctx);
 
-  // run_messaging_phase(&ctx);
+  // Phase 5: Messaging Loop — on persistent connection (messaging.c)
+  run_messaging_phase(&ctx);
 
+  // Phase 6: Logout — on persistent connection, THEN close
+  // (network_funcs.c:176)
   run_logout_phase(&ctx);
 
   quit(&ctx);
@@ -185,13 +195,23 @@ static int run_login_phase(client_context *ctx) {
   return 0;
 }
 
-// static int run_channel_phase(client_context) {
+// Phase 4: Channel List — calls network_execute_channel_list() (channels.c)
+// Uses persistent connection from login (RFC 7.1)
+// Pattern: run_discovery_phase() above
+static int run_channel_phase(client_context *ctx) {
+  ctx->state = STATE_LOGGED_IN;
+  network_execute_channel_list(ctx);
+  return 0;
+}
 
-// }
-
-// static int run_messaging_phase(client_context *ctx) {
-
-// }
+// Phase 5: Messaging Loop — calls network_execute_messaging_loop()
+// (messaging.c) Uses persistent connection from login (RFC 7.1) Pattern:
+// run_discovery_phase() above
+static int run_messaging_phase(client_context *ctx) {
+  ctx->state = STATE_MESSAGING;
+  network_execute_messaging_loop(ctx);
+  return 0;
+}
 
 static int run_logout_phase(client_context *ctx) {
   ctx->state = STATE_EXITING;
