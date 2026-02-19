@@ -23,6 +23,27 @@ typedef enum
     TYPE_GET_MESSAGE_RESPONSE = 0x33
 } big_chat_message_t;
 
+// RFC Section 4.3 — Status codes
+typedef enum
+{
+    STATUS_OK                  = 0x00,
+    STATUS_INVALID_VERSION     = 0x40,
+    STATUS_INVALID_TYPE        = 0x41,
+    STATUS_INVALID_SIZE        = 0x42,
+    STATUS_MALFORMED_REQUEST   = 0x43,
+    STATUS_INVALID_CREDENTIALS = 0x44,
+    STATUS_NOT_FOUND           = 0x45,
+    STATUS_ALREADY_EXISTS      = 0x46,
+    STATUS_NOT_REGISTERED      = 0x47,
+    STATUS_FORBIDDEN           = 0x48,
+    STATUS_NOT_CHANNEL_MEMBER  = 0x49,
+    STATUS_INTERNAL_ERROR      = 0x80,
+    STATUS_SERVICE_UNAVAILABLE = 0x81,
+    STATUS_RESOURCE_EXHAUSTED  = 0x82,
+    STATUS_MESSAGE_TOO_LARGE   = 0x83,
+    STATUS_TIMEOUT             = 0x84
+} big_status_code_t;
+
 
 // 8-byte fixed header
 typedef struct __attribute__((packed)){
@@ -73,7 +94,7 @@ typedef struct __attribute__((packed)) {
 } big_channel_info_t;
 
 //body for channel lists
-typedef struct __attribute((packed)) {
+typedef struct __attribute__((packed)) {
     big_auth_t authentication;
     uint8_t channel_id_length;
     uint8_t channel_id_array[];
