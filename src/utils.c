@@ -22,6 +22,8 @@ void print_usage(client_context *ctx) {
 }
 
 void quit(client_context *ctx) {
+  // to darcy standard explictly handle cleanup to prevent resouce leaks
+  cleanup_client(ctx);
   if (ctx->exit_message != NULL) {
     fputs(ctx->exit_message, stderr);
   }
