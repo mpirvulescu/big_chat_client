@@ -95,14 +95,17 @@ static void parse_arguments(client_context *ctx) {
       printf("Usage: %s -m <manager_ip> -p <manager_port>\n", ctx->argv[0]);
       ctx->exit_code = EXIT_SUCCESS;
       print_usage(ctx);
+      break;
     case ':':
       fprintf(stderr, "Error: Option '-%c' requires an argument.\n", optopt);
       ctx->exit_code = EXIT_FAILURE;
       print_usage(ctx);
+      break;
     case '?':
       fprintf(stderr, "Error: Unknown option '-%c'.\n", optopt);
       ctx->exit_code = EXIT_FAILURE;
       print_usage(ctx);
+      break;
     default:
       ctx->exit_code = EXIT_FAILURE;
       print_usage(ctx);
