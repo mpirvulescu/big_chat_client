@@ -1,4 +1,6 @@
 #include "client.h"
+#include "channels.h"
+#include "messaging.h"
 #include "network_funcs.h"
 #include "utils.h"
 #include <errno.h>
@@ -15,6 +17,8 @@ static void handle_arguments(client_context *ctx);
 static int run_discovery_phase(client_context *ctx);
 static int run_account_creation_phase(client_context *ctx);
 static int run_login_phase(client_context *ctx);
+static int run_channel_phase(client_context *ctx);
+static int run_messaging_phase(client_context *ctx);
 static int run_logout_phase(client_context *ctx);
 
 int main(int argc, char **argv) {
@@ -185,13 +189,16 @@ static int run_login_phase(client_context *ctx) {
   return 0;
 }
 
-// static int run_channel_phase(client_context) {
+static int run_channel_phase(client_context) {
+  ctx->state = STATE_LOGGED_IN;
+  network_execute_channel_list(ctx);
+  return 0;
+}
 
-// }
-
-// static int run_messaging_phase(client_context *ctx) {
-
-// }
+static int run_messaging_phase(client_context *ctx) {
+  ctx->state = STATE_MESSAGING;
+  network_execute_messaging_loop(ctx);
+}
 
 static int run_logout_phase(client_context *ctx) {
   ctx->state = STATE_EXITING;

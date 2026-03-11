@@ -11,6 +11,8 @@ typedef enum
     TYPE_DISCOVERY_RESPONSE       = 0x0B,
     TYPE_ACCOUNT_CREATE_REQUEST  = 0x10,
     TYPE_ACCOUNT_CREATE_RESPONSE  = 0x11,
+    TYPE_GET_USER_INFO_REQUEST = 0x12,
+    TYPE_GET_USER_INFO_RESPONSE = 0x13,
     TYPE_LOGIN_OR_LOGOUT_REQUEST           = 0x14,
     TYPE_LOGIN_OR_LOGOUT_RESPONSE           = 0x15,
     TYPE_GET_CHANNEL_INFO_REQUEST = 0x22,
@@ -69,6 +71,11 @@ typedef struct __attribute__((packed)) {
     char password[PASSWORD_LENGTH];
 } big_auth_t;
 
+typedef struct __atribute__((packed)) {
+    big_auth_t authentication;
+    char target_username;
+    uint8_t user_id;
+} big_user_info_t;
 
 //body for account creation (type 0x10)
 typedef struct __attribute__((packed)) {
