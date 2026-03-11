@@ -71,7 +71,7 @@ typedef struct __attribute__((packed)) {
     char password[PASSWORD_LENGTH];
 } big_auth_t;
 
-typedef struct __atribute__((packed)) {
+typedef struct __attribute__((packed)) {
     big_auth_t authentication;
     char target_username;
     uint8_t user_id;

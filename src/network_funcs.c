@@ -9,9 +9,6 @@
 #include <string.h>
 #include <unistd.h>
 
-// helper for fatal errors
-static void fatal_error(client_context *ctx, char *msg);
-
 // these two for network_execute_discovery
 static void send_discovery_request(client_context *ctx);
 static void recv_discovery_response(client_context *ctx,
@@ -37,13 +34,19 @@ int convert_address(client_context *ctx) {
   return -1;
 }
 
+void fill_authentication_credentials(client_context *ctx, big_auth_t *auth) {
+  memset(auth, 0, sizeof(big_auth_t));
+  strncpy(auth->username, ctx->username, USERNAME_LENGTH - 1);
+  strncpy(auth->password, ctx->password, PASSWORD_LENGTH - 1);
+}
+
 void socket_create(client_context *ctx) {
   // NOLINTNEXTLINE(android-cloexec-socket)
   ctx->active_sock_fd = socket(ctx->addr.ss_family, SOCK_STREAM, 0);
 
   if (ctx->active_sock_fd == -1) {
-    perror("socket");
-    fatal_error(ctx, "Fatal: Could not create socket.\n");
+    ctx->error_message = "Fatal: Could not create socket.\n";
+    fatal_error(ctx);
   }
 }
 
@@ -58,8 +61,8 @@ void socket_connect(client_context *ctx, uint16_t port) {
   // convert IP to string for logging
   if (inet_ntop(AF_INET, &(ipv4_ptr->sin_addr), addr_str, sizeof(addr_str)) ==
       NULL) {
-    perror("inet_ntop");
-    fatal_error(ctx, "Fatal: internal address error.\n");
+    ctx->error_message = "Fatal: internal address error.\n";
+    fatal_error(ctx);
   }
 
   printf("Connecting to: %s:%u\n", addr_str, port);
@@ -73,7 +76,8 @@ void socket_connect(client_context *ctx, uint16_t port) {
   if (connect(ctx->active_sock_fd, (struct sockaddr *)ipv4_ptr, addr_len) ==
       -1) {
     fprintf(stderr, "Error: connect (%d): %s\n", errno, strerror(errno));
-    fatal_error(ctx, "Fatal: Could not connect to server.\n");
+    ctx->error_message = "Fatal: Could not connect to server.\n";
+    fatal_error(ctx);
   }
 
   printf("Successfully connected to: %s:%u\n", addr_str, port);
@@ -84,7 +88,8 @@ void network_execute_discovery(client_context *ctx) {
 
   // setup connection to manager
   if (convert_address(ctx) != 0) {
-    fatal_error(ctx, "Invalid Manager IP format.\n");
+    ctx->error_message = "Invalid Manager IP format.\n";
+    fatal_error(ctx);
   }
 
   socket_create(ctx);
@@ -131,7 +136,8 @@ void network_execute_account_creation(client_context *ctx) {
 
   // re-establish connection (discovery closed it, IP is updated)
   if (convert_address(ctx) != 0) {
-    fatal_error(ctx, "Invalid Server IP format.\n");
+    ctx->error_message = "Invalid Server IP format.\n";
+    fatal_error(ctx);
   }
 
   socket_create(ctx);
@@ -157,7 +163,8 @@ void network_execute_login(client_context *ctx) {
   printf("\n--- Phase 3: Login ---\n");
 
   if (convert_address(ctx) != 0) {
-    fatal_error(ctx, "Invalid Server IP format.\n");
+    ctx->error_message = "Invalid Server IP format.\n";
+    fatal_error(ctx);
   }
 
   socket_create(ctx);
@@ -177,7 +184,8 @@ void network_execute_logout(client_context *ctx) {
   printf("\n--- Phase 4: Logout ---\n");
 
   if (convert_address(ctx) != 0) {
-    fatal_error(ctx, "Invalid Server IP format.\n");
+    ctx->error_message = "Invalid Server IP format.\n";
+    fatal_error(ctx);
   }
 
   socket_create(ctx);
@@ -206,13 +214,13 @@ static void send_discovery_request(client_context *ctx) {
 
   // send header
   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
-    perror("send");
-    fatal_error(ctx, "Network Error: Failed to send discovery request.\n");
+    ctx->error_message = "Network Error: Failed to send discovery request.\n";
+    fatal_error(ctx);
   }
   // send body
   if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
-    perror("send");
-    fatal_error(ctx, "Network Error: Failed to send discovery body.\n");
+    ctx->error_message = "Network Error: Failed to send discovery body.\n";
+    fatal_error(ctx);
   }
 }
 
@@ -224,23 +232,28 @@ static void recv_discovery_response(client_context *ctx,
   ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
 
   if (recvd == 0) {
-    fatal_error(ctx, "Server closed connection unexpectedly.\n");
+    ctx->error_message = "Server closed connection unexpectedly.\n";
+    fatal_error(ctx);
   }
 
   if (recvd != sizeof(hdr)) {
-    fatal_error(ctx, "Failed to receive protocol header.\n");
+    ctx->error_message = "Failed to receive protocol header.\n";
+    fatal_error(ctx);
   }
 
   // validate packet
   if (hdr.type != TYPE_DISCOVERY_RESPONSE) {
-    fatal_error(ctx, "Protocol Error: Invalid response type from Manager.\n");
+    ctx->error_message =
+        "Protocol Error: Invalid response type from Manager.\n";
+    fatal_error(ctx);
   }
 
   // check status - RFC Section 4.3.5: response status MUST reflect result
   // added to prevent code from parsing body if status NOT valid
   if (hdr.status != STATUS_OK) {
     fprintf(stderr, "Manager Error Code: 0x%02X\n", hdr.status);
-    fatal_error(ctx, "Discovery Failed: Manager returned error.\n");
+    ctx->error_message = "Discovery Failed: Manager returned error.\n";
+    fatal_error(ctx);
   }
 
   // convert from network order to host order
@@ -248,7 +261,8 @@ static void recv_discovery_response(client_context *ctx,
   if (body_len != sizeof(big_discovery_res_t)) {
     fprintf(stderr, "Protocol Error: Expected body size %zu, got %u\n",
             sizeof(big_discovery_res_t), body_len);
-    fatal_error(ctx, "Invalid discovery response size.\n");
+    ctx->error_message = "Invalid discovery response size.\n";
+    fatal_error(ctx);
   }
 
   // read body into dest
@@ -256,7 +270,8 @@ static void recv_discovery_response(client_context *ctx,
       recv(ctx->active_sock_fd, dest, sizeof(big_discovery_res_t), MSG_WAITALL);
 
   if (recvd != sizeof(big_discovery_res_t)) {
-    fatal_error(ctx, "Failed to receive discovery body.\n");
+    ctx->error_message = "Failed to receive discovery body.\n";
+    fatal_error(ctx);
   }
 }
 
@@ -281,12 +296,14 @@ static void send_account_creation_request(client_context *ctx) {
 
   // send header
   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
-    fatal_error(ctx, "Network Error: Failed to send register header.\n");
+    ctx->error_message = "Network Error: Failed to send register header.\n";
+    fatal_error(ctx);
   }
 
   // send body
   if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
-    fatal_error(ctx, "Network Error: Failed to send register body.\n");
+    ctx->error_message = "Network Error: Failed to send register body.\n";
+    fatal_error(ctx);
   }
 }
 
@@ -296,15 +313,18 @@ static void recv_account_creation_response(client_context *ctx) {
   ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
 
   if (recvd <= 0) {
-    fatal_error(ctx, "Server disconnected during registration.\n");
+    ctx->error_message = "Server disconnected during registration.\n";
+    fatal_error(ctx);
   }
 
   if (recvd != sizeof(hdr)) {
-    fatal_error(ctx, "Incomplete register response.\n");
+    ctx->error_message = "Incomplete register response.\n";
+    fatal_error(ctx);
   }
 
   if (hdr.type != TYPE_ACCOUNT_CREATE_RESPONSE) {
-    fatal_error(ctx, "Protocol Error: Unexpected response type.\n");
+    ctx->error_message = "Protocol Error: Unexpected response type.\n";
+    fatal_error(ctx);
   }
 
   // check status byte - any non-zero status is fatal (RFC Section 4.3)
@@ -312,15 +332,20 @@ static void recv_account_creation_response(client_context *ctx) {
   if (hdr.status != STATUS_OK) {
     fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
     if (hdr.status == STATUS_ALREADY_EXISTS) {
-      fatal_error(ctx, "Registration Failed: Username already exists.\n");
+      ctx->error_message = "Registration Failed: Username already exists.\n";
+      fatal_error(ctx);
     } else if (hdr.status == STATUS_INVALID_CREDENTIALS) {
-      fatal_error(ctx, "Registration Failed: Invalid credentials.\n");
+      ctx->error_message = "Registration Failed: Invalid credentials.\n";
+      fatal_error(ctx);
     } else if (hdr.status == STATUS_NOT_FOUND) {
-      fatal_error(ctx, "Registration Failed: Resource not found.\n");
+      ctx->error_message = "Registration Failed: Resource not found.\n";
+      fatal_error(ctx);
     } else if (hdr.status == STATUS_INTERNAL_ERROR) {
-      fatal_error(ctx, "Registration Failed: Server internal error.\n");
+      ctx->error_message = "Registration Failed: Server internal error.\n";
+      fatal_error(ctx);
     } else {
-      fatal_error(ctx, "Registration Failed: Unknown server error.\n");
+      ctx->error_message = "Registration Failed: Unknown server error.\n";
+      fatal_error(ctx);
     }
   }
 
@@ -336,7 +361,8 @@ static void recv_account_creation_response(client_context *ctx) {
         recv(ctx->active_sock_fd, &resp_body, sizeof(resp_body), MSG_WAITALL);
 
     if (recvd_body != (ssize_t)sizeof(resp_body)) {
-      fatal_error(ctx, "Failed to read registration response body.\n");
+      ctx->error_message = "Failed to read registration response body.\n";
+      fatal_error(ctx);
     }
 
     ctx->account_id = resp_body.client_id;
@@ -346,7 +372,8 @@ static void recv_account_creation_response(client_context *ctx) {
     char *junk = malloc(bsize);
 
     if (junk == NULL) {
-      fatal_error(ctx, "Fatal: Out of memory.\n");
+      ctx->error_message = "Fatal: Out of memory.\n";
+      fatal_error(ctx);
       return;
     }
 
@@ -356,17 +383,12 @@ static void recv_account_creation_response(client_context *ctx) {
 
     if (recvd_body != (ssize_t)bsize) {
       free(junk);
-      fatal_error(ctx, "Failed to read response body.\n");
+      ctx->error_message = "Failed to read response body.\n";
+      fatal_error(ctx);
       return;
     }
     free(junk);
   }
-}
-
-static void fatal_error(client_context *ctx, char *msg) {
-  ctx->exit_code = EXIT_FAILURE;
-  ctx->exit_message = msg;
-  quit(ctx);
 }
 
 // get actual client IP from the connected socket
@@ -387,7 +409,8 @@ static void send_login_logout_request(client_context *ctx,
   socklen_t addr_len = sizeof(local_addr);
   if (getsockname(ctx->active_sock_fd, (struct sockaddr *)&local_addr,
                   &addr_len) == -1) {
-    fatal_error(ctx, "Failed to get local socket address.\n");
+    ctx->error_message = "Failed to get local socket address.\n";
+    fatal_error(ctx);
   }
 
   memcpy(&body.client_ip, &local_addr.sin_addr.s_addr, sizeof(ipv4_address_t));
@@ -402,12 +425,14 @@ static void send_login_logout_request(client_context *ctx,
 
   // send header
   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
-    fatal_error(ctx, "Network Error: Failed to send login header.\n");
+    ctx->error_message = "Network Error: Failed to send login header.\n";
+    fatal_error(ctx);
   }
 
   // send body
   if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
-    fatal_error(ctx, "Network Error: Failed to send login body.\n");
+    ctx->error_message = "Network Error: Failed to send login body.\n";
+    fatal_error(ctx);
   }
 }
 
@@ -418,20 +443,24 @@ static void recv_login_logout_response(client_context *ctx) {
   ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
 
   if (recvd <= 0) {
-    fatal_error(ctx, "Server disconnected during login.\n");
+    ctx->error_message = "Server disconnected during login.\n";
+    fatal_error(ctx);
   }
 
   if (recvd != sizeof(hdr)) {
-    fatal_error(ctx, "Incomplete login response.\n");
+    ctx->error_message = "Incomplete login response.\n";
+    fatal_error(ctx);
   }
 
   if (hdr.type != TYPE_LOGIN_OR_LOGOUT_RESPONSE) {
-    fatal_error(ctx, "Protocol Error: Unexpected response type.\n");
+    ctx->error_message = "Protocol Error: Unexpected response type.\n";
+    fatal_error(ctx);
   }
 
   if (hdr.status != STATUS_OK) {
     fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
-    fatal_error(ctx, "Login/Logout Failed: Server returned error.\n");
+    ctx->error_message = "Login/Logout Failed: Server returned error.\n";
+    fatal_error(ctx);
   }
 
   // drain any response body
@@ -440,7 +469,8 @@ static void recv_login_logout_response(client_context *ctx) {
     char *junk = malloc(bsize);
 
     if (junk == NULL) {
-      fatal_error(ctx, "Fatal: Out of memory.\n");
+      ctx->error_message = "Fatal: Out of memory.\n";
+      fatal_error(ctx);
       return;
     }
 
@@ -449,7 +479,8 @@ static void recv_login_logout_response(client_context *ctx) {
 
     if (recvd_body != (ssize_t)bsize) {
       free(junk);
-      fatal_error(ctx, "Failed to read login response body.\n");
+      ctx->error_message = "Failed to read login response body.\n";
+      fatal_error(ctx);
       return;
     }
     free(junk);

@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 typedef struct {
-    uint8_t channel_id
+    uint8_t channel_id;
 } channel_t;
 
 void network_execute_channel_list(client_context *ctx);

@@ -14,7 +14,6 @@ enum
     USERNAME_LENGTH = 16,
     PASSWORD_LENGTH = 16,
     CHANNEL_NAME_LENGTH = 16,
-    CHANNEL_NAME_LENGTH = 16,
     MAX_CHANNEL_COUNT = 255
 };
 
@@ -36,6 +35,7 @@ typedef struct
 
     int exit_code;
     char *exit_message;
+    char *error_message;
 
     client_state state; //keep track of where we're at
     int active_sock_fd; //the active socket (gonna switch from manager to chat)

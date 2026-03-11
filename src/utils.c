@@ -1,4 +1,5 @@
 #include "utils.h"
+#include "client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,12 @@ void print_usage(client_context *ctx) {
   fputs("  -m <manager_ip_address> The server manager's IP address\n", stderr);
   fputs("  -p <manager_port> The server manager's port\n", stderr);
   fputs(" -h Display this help and exit\n", stderr);
+}
+
+void fatal_error(client_context *ctx) {
+  ctx->exit_code = EXIT_FAILURE;
+  ctx->exit_message = ctx->error_message;
+  quit(ctx);
 }
 
 void quit(client_context *ctx) {
