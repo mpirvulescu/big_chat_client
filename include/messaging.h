@@ -6,5 +6,5 @@
 
 void network_execute_messaging_loop(client_context *ctx);
 
-#endif
+#endif /* MESSAGING_H*/
 

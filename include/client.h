@@ -13,7 +13,9 @@ enum
 {
     USERNAME_LENGTH = 16,
     PASSWORD_LENGTH = 16,
-    CHANNEL_NAME_LENGTH = 16
+    CHANNEL_NAME_LENGTH = 16,
+    CHANNEL_NAME_LENGTH = 16,
+    MAX_CHANNEL_COUNT = 255
 };
 
 typedef enum 
@@ -46,6 +48,15 @@ typedef struct
     char username[USERNAME_LENGTH];
     char password[PASSWORD_LENGTH];
     uint8_t account_id;
+
+    char server_ip[INET_ADDRSTRLEN];
+    uint16_t server_port;
+
+    uint8_t channel_ids[MAX_CHANNEL_COUNT];
+    uint8_t channel_count;
+    uint8_t current_channel_id;
+
+    int in_messaging_loop;
 
 } client_context;
 
