@@ -14,6 +14,9 @@
 static void send_channel_list_request(client_context *ctx);
 static void recv_channel_list_response(client_context *ctx);
 
+static void send_channel_join_request(client_context *ctx, uint8_t channel_id);
+static void recv_channel_join_response(client_context *ctx);
+
 // helper functions for main helper functions
 static void prepare_and_send_header_for_channel_list_req(client_context *ctx);
 static void send_body_for_channel_list_req(client_context *ctx,
@@ -25,7 +28,7 @@ static void receive_body_for_channel_list(client_context *ctx,
                                           uint32_t total_size);
 
 void network_execute_channel_list(client_context *ctx) {
-  printf("channel list\n");
+  // printf("channel list\n");
   send_channel_list_request(ctx);
   recv_channel_list_response(ctx);
 }
@@ -48,7 +51,7 @@ static void prepare_and_send_header_for_channel_list_req(client_context *ctx) {
                              .type = TYPE_LIST_ALL_CHANNELS_REQUEST,
                              .status = 0,
                              .reserved = 0,
-                             .body = htonl(sizeof(big_auth_t) + 1)};
+                             .body = htonl(sizeof(big_channel_list_t))};
 
   if (send(ctx->active_sock_fd, &req_header, sizeof(req_header), 0) !=
       sizeof(req_header)) {
@@ -60,7 +63,7 @@ static void prepare_and_send_header_for_channel_list_req(client_context *ctx) {
 
 static void send_body_for_channel_list_req(client_context *ctx,
                                            big_channel_list_t *body) {
-  size_t req_body_len = sizeof(big_auth_t) + 1;
+  size_t req_body_len = sizeof(big_channel_list_t);
 
   if (send(ctx->active_sock_fd, body, req_body_len, 0) !=
       (ssize_t)req_body_len) {
@@ -103,7 +106,7 @@ static void receive_header_for_channel_list(client_context *ctx,
   }
 
   if (header->status != STATUS_OK) {
-    fprintf(stderr, "Server Error Code: 0x%02X\n", header->status);
+    // fprintf(stderr, "Server Error Code: 0x%02X\n", header->status);
     ctx->error_message = "Channel List Failed: Server returned error.\n";
     fatal_error(ctx);
   }
@@ -120,7 +123,7 @@ static void receive_header_for_channel_list(client_context *ctx,
 
 static void receive_body_for_channel_list(client_context *ctx,
                                           uint32_t total_size) {
-  if (total_size < sizeof(big_auth_t) + 1) {
+  if (total_size < sizeof(big_channel_list_t)) {
     ctx->error_message = "Protocol Error: Body too small for channel list.\n";
     fatal_error(ctx);
   }
@@ -138,5 +141,96 @@ static void receive_body_for_channel_list(client_context *ctx,
     fatal_error(ctx);
   }
 
+  size_t count = full_list->channel_id_length;
+  if (count > MAX_CHANNEL_COUNT) {
+    count = MAX_CHANNEL_COUNT;
+  }
+  ctx->channel_count = count;
+  for (size_t i = 0; i < count; i++) {
+    ctx->channel_ids[i] = full_list->channel_id_array[i];
+  }
+
+  // printf("Available channels (%zu):\n", count);
+  // for (size_t i = 0; i < count; i++) {
+  //   printf("  [%zu] Channel ID: %hhu\n", i, ctx->channel_ids[i]);
+  // }
+
   free(full_list);
+}
+
+void network_execute_channel_join(client_context *ctx, uint8_t channel_id) {
+  // printf("Joining channel %u...\n", channel_id);
+  send_channel_join_request(ctx, channel_id);
+  recv_channel_join_response(ctx);
+  ctx->current_channel_id = channel_id;
+  // printf("Joined channel %u.\n", channel_id);
+}
+
+static void send_channel_join_request(client_context *ctx, uint8_t channel_id) {
+  size_t body_size =
+      sizeof(big_channel_info_t); // flexible array member at 0 length
+
+  big_header_t hdr = {.version = BIG_CHAT_VERSION,
+                      .type = TYPE_GET_CHANNEL_INFO_REQUEST,
+                      .status = 0,
+                      .reserved = 0,
+                      .body = htonl((uint32_t)body_size)};
+
+  if (send(ctx->active_sock_fd, &hdr, sizeof(hdr), 0) != sizeof(hdr)) {
+    ctx->error_message = "Network Error: Failed to send channel join header.\n";
+    fatal_error(ctx);
+  }
+
+  big_channel_info_t *body = calloc(1, body_size);
+  if (!body) {
+    ctx->error_message = "Fatal: Out of memory.\n";
+    fatal_error(ctx);
+  }
+
+  fill_authentication_credentials(ctx, &body->authentication);
+  // channel_name left as zeroes, server identifies by channel_id
+  body->channel_id = channel_id;
+  body->user_id_length = 0;
+
+  if (send(ctx->active_sock_fd, body, body_size, 0) != (ssize_t)body_size) {
+    free(body);
+    ctx->error_message = "Network Error: Failed to send channel join body.\n";
+    fatal_error(ctx);
+  }
+  free(body);
+}
+
+static void recv_channel_join_response(client_context *ctx) {
+  big_header_t hdr;
+  ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
+
+  if (recvd <= 0) {
+    ctx->error_message =
+        "Server closed connection unexpectedly during channel join.\n";
+    fatal_error(ctx);
+  }
+  if (recvd != sizeof(hdr)) {
+    ctx->error_message = "Failed to receive channel join response header.\n";
+    fatal_error(ctx);
+  }
+  if (hdr.type != TYPE_GET_CHANNEL_INFO_RESPONSE) {
+    ctx->error_message =
+        "Protocol Error: Expected Get Channel Info Response (0x23).\n";
+    fatal_error(ctx);
+  }
+  if (hdr.status != STATUS_OK) {
+    // fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
+    ctx->error_message = "Channel Join Failed: Server returned error.\n";
+    fatal_error(ctx);
+  }
+
+  // drain the response body (we have the channel_id already)
+  uint32_t body_size = ntohl(hdr.body);
+  if (body_size > 0) {
+    char *junk = malloc(body_size);
+    if (junk) {
+      recv(ctx->active_sock_fd, junk, body_size, MSG_WAITALL);
+      free(junk);
+    }
+  }
 }

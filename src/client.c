@@ -2,6 +2,7 @@
 #include "channels.h"
 #include "messaging.h"
 #include "network_funcs.h"
+#include "ui.h"
 #include "utils.h"
 #include <errno.h>
 #include <getopt.h>
@@ -18,37 +19,32 @@ static int run_discovery_phase(client_context *ctx);
 static int run_account_creation_phase(client_context *ctx);
 static int run_login_phase(client_context *ctx);
 static int run_channel_phase(client_context *ctx);
+/*bug when logging out, removing for now*/
 // static int run_messaging_phase(client_context *ctx);
 static int run_logout_phase(client_context *ctx);
 
 int main(int argc, char **argv) {
-  client_context ctx;
-  ctx = init_context();
-
+  client_context ctx = init_context();
   ctx.argc = argc;
   ctx.argv = argv;
 
   parse_arguments(&ctx);
   handle_arguments(&ctx);
 
-  // find the fucking server
+  ui_init();
+  ui_set_status("Discovering server at %s:%u ...", ctx.manager_ip,
+                ctx.manager_port);
+
   run_discovery_phase(&ctx);
-
-  // create the damn account
   run_account_creation_phase(&ctx);
-
-  // login and logout with the chat server
   run_login_phase(&ctx);
-
-  // TO-DO
-  //  run_channel_phase(&ctx);
-
+  run_channel_phase(&ctx);
+  /*bug when logging out, removing for now*/
   // run_messaging_phase(&ctx);
-
   run_logout_phase(&ctx);
 
+  ui_teardown();
   quit(&ctx);
-
   return EXIT_SUCCESS;
 }
 
@@ -72,20 +68,18 @@ static void parse_arguments(client_context *ctx) {
 
   while ((opt = getopt(ctx->argc, ctx->argv, optstring)) != -1) {
     switch (opt) {
-    // for the manager ip
     case 'm':
       if (optarg) {
         snprintf(ctx->manager_ip, sizeof(ctx->manager_ip), "%s", optarg);
       }
       break;
-    // for the manager port
+
     case 'p':
       if (optarg) {
         char *endptr;
+        unsigned long port;
         errno = 0;
-        // parse the port
-        unsigned long port = strtoul(optarg, &endptr, PORT_BASE);
-
+        port = strtoul(optarg, &endptr, PORT_BASE);
         if (errno != 0 || *endptr != '\0' || port > UINT16_MAX) {
           fprintf(stderr, "Error: Invalid port '%s'. Range: 1-65535.\n",
                   optarg);
@@ -95,24 +89,30 @@ static void parse_arguments(client_context *ctx) {
         ctx->manager_port = (uint16_t)port;
       }
       break;
+
     case 'h':
-      printf("Usage: %s -m <manager_ip> -p <manager_port>\n", ctx->argv[0]);
+      fprintf(stderr, "Usage: %s -m <manager_ip> -p <manager_port>\n",
+              ctx->argv[0]);
       ctx->exit_code = EXIT_SUCCESS;
       print_usage(ctx);
       break;
+
     case ':':
       fprintf(stderr, "Error: Option '-%c' requires an argument.\n", optopt);
       ctx->exit_code = EXIT_FAILURE;
       print_usage(ctx);
       break;
+
     case '?':
       fprintf(stderr, "Error: Unknown option '-%c'.\n", optopt);
       ctx->exit_code = EXIT_FAILURE;
       print_usage(ctx);
       break;
+
     default:
       ctx->exit_code = EXIT_FAILURE;
       print_usage(ctx);
+      break;
     }
   }
 }
@@ -129,80 +129,64 @@ static void handle_arguments(client_context *ctx) {
     ctx->exit_code = EXIT_FAILURE;
     print_usage(ctx);
   }
-
-  //   struct in_addr addr;
-  //   if (inet_pton(AF_INET, ctx->manager_ip, &addr) != 1) {
-  //     fprintf(stderr, "Error: '%s' is not a valid IPv4 address.\n",
-  //             ctx->manager_ip);
-  //     ctx->exit_code = EXIT_FAILURE;
-  //     print_usage(ctx);
-  //   }
-
-  printf("client is ready for discovery via %s:%u\n", ctx->manager_ip,
-         ctx->manager_port);
 }
 
 static int run_discovery_phase(client_context *ctx) {
   ctx->state = STATE_DISCOVERING;
-
   network_execute_discovery(ctx);
-
   return 0;
 }
 
 static int run_account_creation_phase(client_context *ctx) {
   ctx->state = STATE_CONNECTING_TO_SERVER;
-
-  printf("\n[Account Creation]\n");
-  // disable to prevent double account setup loop
-  // get_user_input(ctx->username, sizeof(ctx->username), "Enter Username: ");
-  // get_user_input(ctx->password, sizeof(ctx->password), "Enter Password: ");
-
-  // username loop
-  while (1) {
-    get_user_input(ctx->username, sizeof(ctx->username), "Enter Username: ");
-    if (strlen(ctx->username) > 0) {
-      break; // input is valid
-    }
-    printf("Error: Username cannot be empty. Please try again.\n");
+  credentials_result_t result = ui_screen_credentials(ctx, "Register");
+  if (result == CREDENTIALS_SUBMIT) {
+    ui_set_status("Registering account...");
+    network_execute_account_creation(ctx);
   }
-
-  // password loop
-  while (1) {
-    get_user_input(ctx->password, sizeof(ctx->password), "Enter Password: ");
-    if (strlen(ctx->password) > 0) {
-      break; // input is valid
-    }
-    printf("Error: Password cannot be empty. Please try again.\n");
-  }
-
-  // call network layer to do the handshake
-  network_execute_account_creation(ctx);
-
   ctx->state = STATE_LOGGED_IN;
   return 0;
 }
 
 static int run_login_phase(client_context *ctx) {
   ctx->state = STATE_LOGGED_IN;
+  memset(ctx->username, 0, sizeof(ctx->username));
+  memset(ctx->password, 0, sizeof(ctx->password));
+  ui_screen_credentials(ctx, "Login");
+  ui_set_status("Logging in...");
   network_execute_login(ctx);
   return 0;
 }
 
 static int run_channel_phase(client_context *ctx) {
-  ctx->state = STATE_LOGGED_IN;
-  network_execute_channel_list(ctx);
+  chat_exit_reason_t chat_reason = CHAT_EXIT_LOGOUT;
+  do {
+    channel_list_choice_t choice;
+    ctx->state = STATE_LOGGED_IN;
+    choice = network_execute_channel_phase(ctx);
+    if (choice.action == CHANNEL_LIST_LOGOUT) {
+      break;
+    }
+    ctx->state = STATE_MESSAGING;
+    chat_reason = ui_screen_chat(ctx);
+  } while (chat_reason == CHAT_EXIT_CHANNEL_LIST);
   return 0;
 }
 
+/*bug when logging out, removing for now*/
+
 // static int run_messaging_phase(client_context *ctx) {
 //   ctx->state = STATE_MESSAGING;
-//   network_execute_messaging_loop(ctx);
+//   /* ui_screen_chat blocks until ESC or /quit,
+//      closes the socket, and sets state to STATE_LOGGED_IN. */
+//   ui_screen_chat(ctx);
+//   ctx->state = STATE_LOGGED_IN;
 //   return 0;
 // }
 
 static int run_logout_phase(client_context *ctx) {
   ctx->state = STATE_EXITING;
+  ui_set_status("Logging out...");
   network_execute_logout(ctx);
   return 0;
 }

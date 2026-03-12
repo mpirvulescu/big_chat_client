@@ -1,6 +1,8 @@
 #include "network_funcs.h"
+#include "channels.h"
 #include "client.h"
 #include "protocol.h"
+#include "ui.h"
 #include "utils.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -65,7 +67,7 @@ void socket_connect(client_context *ctx, uint16_t port) {
     fatal_error(ctx);
   }
 
-  printf("Connecting to: %s:%u\n", addr_str, port);
+  // printf("Connecting to: %s:%u\n", addr_str, port);
 
   // convert port to network byte order
   net_port = htons(port);
@@ -75,16 +77,16 @@ void socket_connect(client_context *ctx, uint16_t port) {
   // connection call
   if (connect(ctx->active_sock_fd, (struct sockaddr *)ipv4_ptr, addr_len) ==
       -1) {
-    fprintf(stderr, "Error: connect (%d): %s\n", errno, strerror(errno));
+    // fprintf(stderr, "Error: connect (%d): %s\n", errno, strerror(errno));
     ctx->error_message = "Fatal: Could not connect to server.\n";
     fatal_error(ctx);
   }
 
-  printf("Successfully connected to: %s:%u\n", addr_str, port);
+  // printf("Successfully connected to: %s:%u\n", addr_str, port);
 }
 
 void network_execute_discovery(client_context *ctx) {
-  printf("\n--- Phase 1: Server Discovery ---\n");
+  // printf("\n--- Phase 1: Server Discovery ---\n");
 
   // setup connection to manager
   if (convert_address(ctx) != 0) {
@@ -117,8 +119,8 @@ void network_execute_discovery(client_context *ctx) {
   //   fatal_error(ctx, "Discovery Error: Invalid IP received from Manager.\n");
   // }
 
-  printf("Redirecting to Chat Node %d at %s\n", response.server_id,
-         node_ip_str);
+  // printf("Redirecting to Chat Node %d at %s\n", response.server_id,
+  // node_ip_str);
 
   // overwrite manager IP with new chat node IP
   snprintf(ctx->manager_ip, sizeof(ctx->manager_ip), "%s", node_ip_str);
@@ -132,7 +134,7 @@ void network_execute_discovery(client_context *ctx) {
 }
 
 void network_execute_account_creation(client_context *ctx) {
-  printf("\n--- Phase 2: Account Registration ---\n");
+  // printf("\n--- Phase 2: Account Registration ---\n");
 
   // re-establish connection (discovery closed it, IP is updated)
   if (convert_address(ctx) != 0) {
@@ -156,11 +158,11 @@ void network_execute_account_creation(client_context *ctx) {
   close(ctx->active_sock_fd);
   ctx->active_sock_fd = -1;
 
-  printf("Registration Successful. Account created.\n");
+  // printf("Registration Successful. Account created.\n");
 }
 
 void network_execute_login(client_context *ctx) {
-  printf("\n--- Phase 3: Login ---\n");
+  // printf("\n--- Phase 3: Login ---\n");
 
   if (convert_address(ctx) != 0) {
     ctx->error_message = "Invalid Server IP format.\n";
@@ -177,11 +179,11 @@ void network_execute_login(client_context *ctx) {
   close(ctx->active_sock_fd);
   ctx->active_sock_fd = -1;
 
-  printf("Login Successful.\n");
+  // printf("Login Successful.\n");
 }
 
 void network_execute_logout(client_context *ctx) {
-  printf("\n--- Phase 4: Logout ---\n");
+  // printf("\n--- Phase 4: Logout ---\n");
 
   if (convert_address(ctx) != 0) {
     ctx->error_message = "Invalid Server IP format.\n";
@@ -198,7 +200,7 @@ void network_execute_logout(client_context *ctx) {
   close(ctx->active_sock_fd);
   ctx->active_sock_fd = -1;
 
-  printf("Logout Successful.\n");
+  // printf("Logout Successful.\n");
 }
 
 // void network_execute_login(client_context *ctx) {}
@@ -251,7 +253,7 @@ static void recv_discovery_response(client_context *ctx,
   // check status - RFC Section 4.3.5: response status MUST reflect result
   // added to prevent code from parsing body if status NOT valid
   if (hdr.status != STATUS_OK) {
-    fprintf(stderr, "Manager Error Code: 0x%02X\n", hdr.status);
+    // fprintf(stderr, "Manager Error Code: 0x%02X\n", hdr.status);
     ctx->error_message = "Discovery Failed: Manager returned error.\n";
     fatal_error(ctx);
   }
@@ -259,8 +261,8 @@ static void recv_discovery_response(client_context *ctx,
   // convert from network order to host order
   uint32_t body_len = ntohl(hdr.body);
   if (body_len != sizeof(big_discovery_res_t)) {
-    fprintf(stderr, "Protocol Error: Expected body size %zu, got %u\n",
-            sizeof(big_discovery_res_t), body_len);
+    // fprintf(stderr, "Protocol Error: Expected body size %zu, got %u\n",
+    // sizeof(big_discovery_res_t), body_len);
     ctx->error_message = "Invalid discovery response size.\n";
     fatal_error(ctx);
   }
@@ -330,7 +332,7 @@ static void recv_account_creation_response(client_context *ctx) {
   // check status byte - any non-zero status is fatal (RFC Section 4.3)
   // status byte enum in prtocol.h
   if (hdr.status != STATUS_OK) {
-    fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
+    // fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
     if (hdr.status == STATUS_ALREADY_EXISTS) {
       ctx->error_message = "Registration Failed: Username already exists.\n";
       fatal_error(ctx);
@@ -366,7 +368,7 @@ static void recv_account_creation_response(client_context *ctx) {
     }
 
     ctx->account_id = resp_body.client_id;
-    printf("Assigned account ID: %u\n", ctx->account_id);
+    // printf("Assigned account ID: %u\n", ctx->account_id);
 
   } else if (bsize > 0) {
     char *junk = malloc(bsize);
@@ -436,6 +438,41 @@ static void send_login_logout_request(client_context *ctx,
   }
 }
 
+channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
+  channel_list_choice_t choice;
+
+  if (convert_address(ctx) != 0) {
+    ctx->error_message = "Invalid Server IP format.\n";
+    fatal_error(ctx);
+  }
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+  network_execute_channel_list(ctx);
+  close(ctx->active_sock_fd);
+  ctx->active_sock_fd = -1;
+
+  if (ctx->channel_count == 0) {
+    ctx->error_message = "No channels available on this server.\n";
+    fatal_error(ctx);
+  }
+
+  choice = ui_screen_channel_list(ctx);
+
+  if (choice.action == CHANNEL_LIST_LOGOUT) {
+    return choice; /* skip join entirely */
+  }
+
+  if (convert_address(ctx) != 0) {
+    ctx->error_message = "Invalid Server IP format.\n";
+    fatal_error(ctx);
+  }
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+  network_execute_channel_join(ctx, choice.channel_id);
+
+  return choice;
+}
+
 // any non-zero status is fatal (ok=0x00, senderError=0x10, receiverError=0x20)
 static void recv_login_logout_response(client_context *ctx) {
   big_header_t hdr;
@@ -458,7 +495,7 @@ static void recv_login_logout_response(client_context *ctx) {
   }
 
   if (hdr.status != STATUS_OK) {
-    fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
+    // fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
     ctx->error_message = "Login/Logout Failed: Server returned error.\n";
     fatal_error(ctx);
   }

@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "client.h"
+#include "ui.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,7 +8,7 @@
 
 void cleanup_client(client_context *ctx) {
   if (ctx->active_sock_fd >= 0) {
-    printf("Closing connection and exiting...\n");
+    // printf("Closing connection and exiting...\n");
     close(ctx->active_sock_fd);
     ctx->active_sock_fd = -1;
   }
@@ -30,6 +31,7 @@ void fatal_error(client_context *ctx) {
 
 void quit(client_context *ctx) {
   // to darcy standard explictly handle cleanup to prevent resouce leaks
+  ui_teardown();
   cleanup_client(ctx);
   if (ctx->exit_message != NULL) {
     fputs(ctx->exit_message, stderr);

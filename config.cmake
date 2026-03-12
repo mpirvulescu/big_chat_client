@@ -27,6 +27,7 @@ set(main_SOURCES
         src/messaging.c 
         src/network_funcs.c
         src/utils.c
+        src/ui.c
 )
 
 set(main_HEADERS
@@ -36,7 +37,8 @@ set(main_HEADERS
         include/network_funcs.h
         include/protocol.h
         include/utils.h
+        include/ui.h
 )
 
-set(main_LINK_LIBRARIES "")
+set(main_LINK_LIBRARIES "ncurses")
 
