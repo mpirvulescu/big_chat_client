@@ -219,7 +219,7 @@ static void recv_channel_join_response(client_context *ctx) {
     fatal_error(ctx);
   }
   if (hdr.status != STATUS_OK) {
-    // fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
+    fprintf(stderr, "Server Error Code: 0x%02X\n", hdr.status);
     ctx->error_message = "Channel Join Failed: Server returned error.\n";
     fatal_error(ctx);
   }
