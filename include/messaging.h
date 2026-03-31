@@ -3,6 +3,7 @@
 
 #include "client.h"
 #include "protocol.h"
+#include <stddef.h>
 
 enum {
     MAX_MESSAGE = 1024

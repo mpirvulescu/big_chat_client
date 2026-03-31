@@ -2,6 +2,7 @@
 #define UTILS_H
 
 #include "client.h"
+#include <stddef.h>
 
 void cleanup_client(client_context *ctx);
 
