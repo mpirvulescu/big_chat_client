@@ -105,6 +105,11 @@ int network_receive_pending(client_context *ctx,
       return -1;
     }
 
+    // if (msg->sender_id == ctx->account_id) {
+    //   free(msg);
+    //   return 0;
+    // }
+
     char sender_name[USERNAME_LENGTH + 1];
     memset(sender_name, 0, sizeof(sender_name));
     lookup_username(ctx, msg->sender_id, sender_name, sizeof(sender_name));
@@ -132,6 +137,8 @@ int network_receive_pending(client_context *ctx,
 
   // Unknown packet type — drain and continue
   discard_body(ctx, body_size);
+  fprintf(stderr, "DEBUG: unexpected type 0x%02X size %u\n", header.type,
+          body_size);
   return 0;
 }
 
@@ -148,22 +155,99 @@ static void discard_body(client_context *ctx, uint32_t body_size) {
   (void)ctx;
 }
 
+// void lookup_username(client_context *ctx, uint8_t sender_id, char *out_name,
+//                      size_t out_size) {
+//   // REMOVE LATER. THIS IS ONLY IF SERVERS DON'T SUPPORT GETTING USERNAME
+//   // (0X12/0X13) SO IT DOESNT HANG
+//   // NOLINTNEXTLINE(clang-diagnostic-c23-extensions,-warnings-as-errors)
+//   struct timeval tv = {
+//       .tv_sec = 0,
+//       .tv_usec =
+//           500000}; //
+//           NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)
+//   struct timeval zero = {.tv_sec = 0, .tv_usec = 0};
+//   /*REMOVAL END HERE*/
+
+//   big_user_info_t req;
+//   memset(&req, 0, sizeof(req));
+//   fill_authentication_credentials(ctx, &req.authentication);
+//   req.user_id = sender_id; /* server resolves by ID when username is zeroed
+//   */
+
+//   big_header_t hdr = {.version = BIG_CHAT_VERSION,
+//                       .type = TYPE_GET_USER_INFO_REQUEST,
+//                       .status = 0,
+//                       .reserved = 0,
+//                       .body = htonl(sizeof(req))};
+
+//   if (send(ctx->active_sock_fd, &hdr, sizeof(hdr), 0) != sizeof(hdr)) {
+//     return;
+//   }
+//   if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+//     return;
+//   }
+
+//   // REMOVE LATER. THIS IS ONLY IF SERVERS DON'T SUPPORT GETTING USERNAME
+//   // (0X12/0X13) SO IT DOESNT HANG
+//   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+//   /*REMOVAL END HERE*/
+
+//   /* response body same struct layout: big_user_info_t */
+//   big_header_t resp_hdr;
+//   if (recv(ctx->active_sock_fd, &resp_hdr, sizeof(resp_hdr), MSG_WAITALL) !=
+//       (ssize_t)sizeof(resp_hdr)) {
+//     return;
+//   }
+//   if (resp_hdr.type != TYPE_GET_USER_INFO_RESPONSE) {
+//     return;
+//   }
+//   if (resp_hdr.status != STATUS_OK) {
+//     return;
+//   }
+//   if (ntohl(resp_hdr.body) != sizeof(big_user_info_t)) {
+//     return;
+//   }
+
+//   big_user_info_t resp;
+//   if (recv(ctx->active_sock_fd, &resp, sizeof(resp), MSG_WAITALL) !=
+//       (ssize_t)sizeof(resp)) {
+//     return;
+//   }
+
+//   /* target_username is at resp.target_username, null-padded fixed width */
+//   snprintf(out_name, out_size, "%.*s", (int)sizeof(resp.target_username),
+//            resp.target_username);
+
+//   /*CHECK PREVIOUS MESSAGE ABOUT REMOVE LATER. THIS WILL BE REMOVED LATER
+//   TOO*/
+
+//   goto cleanup;
+// cleanup:
+//   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &zero,
+//   sizeof(zero));
+//   /*REMOVAL END HERE*/
+// }
+
 void lookup_username(client_context *ctx, uint8_t sender_id, char *out_name,
                      size_t out_size) {
-  // REMOVE LATER. THIS IS ONLY IF SERVERS DON'T SUPPORT GETTING USERNAME
-  // (0X12/0X13) SO IT DOESNT HANG
+  if (ctx->username_cached[sender_id]) {
+    strncpy(out_name, ctx->username_cache[sender_id], out_size - 1);
+    out_name[out_size - 1] = '\0';
+    return;
+  }
+
   // NOLINTNEXTLINE(clang-diagnostic-c23-extensions,-warnings-as-errors)
   struct timeval tv = {
       .tv_sec = 0,
       .tv_usec =
           500000}; // NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)
   struct timeval zero = {.tv_sec = 0, .tv_usec = 0};
-  /*REMOVAL END HERE*/
 
   big_user_info_t req;
   memset(&req, 0, sizeof(req));
   fill_authentication_credentials(ctx, &req.authentication);
-  req.user_id = sender_id; /* server resolves by ID when username is zeroed */
+  req.user_id = sender_id;
 
   big_header_t hdr = {.version = BIG_CHAT_VERSION,
                       .type = TYPE_GET_USER_INFO_REQUEST,
@@ -178,42 +262,37 @@ void lookup_username(client_context *ctx, uint8_t sender_id, char *out_name,
     return;
   }
 
-  // REMOVE LATER. THIS IS ONLY IF SERVERS DON'T SUPPORT GETTING USERNAME
-  // (0X12/0X13) SO IT DOESNT HANG
   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-  /*REMOVAL END HERE*/
-
-  /* response body same struct layout: big_user_info_t */
   big_header_t resp_hdr;
   if (recv(ctx->active_sock_fd, &resp_hdr, sizeof(resp_hdr), MSG_WAITALL) !=
       (ssize_t)sizeof(resp_hdr)) {
-    return;
+    goto cleanup;
   }
   if (resp_hdr.type != TYPE_GET_USER_INFO_RESPONSE) {
-    return;
+    goto cleanup;
   }
   if (resp_hdr.status != STATUS_OK) {
-    return;
+    goto cleanup;
   }
   if (ntohl(resp_hdr.body) != sizeof(big_user_info_t)) {
-    return;
+    goto cleanup;
   }
 
   big_user_info_t resp;
   if (recv(ctx->active_sock_fd, &resp, sizeof(resp), MSG_WAITALL) !=
       (ssize_t)sizeof(resp)) {
-    return;
+    goto cleanup;
   }
 
-  /* target_username is at resp.target_username, null-padded fixed width */
-  snprintf(out_name, out_size, "%.*s", (int)sizeof(resp.target_username),
-           resp.target_username);
+  strncpy(out_name, resp.target_username, out_size - 1);
+  out_name[out_size - 1] = '\0';
 
-  /*CHECK PREVIOUS MESSAGE ABOUT REMOVE LATER. THIS WILL BE REMOVED LATER TOO*/
+  // Cache the result
+  strncpy(ctx->username_cache[sender_id], out_name, USERNAME_LENGTH - 1);
+  ctx->username_cache[sender_id][USERNAME_LENGTH - 1] = '\0';
+  ctx->username_cached[sender_id] = 1;
 
-  goto cleanup;
 cleanup:
   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &zero, sizeof(zero));
-  /*REMOVAL END HERE*/
 }

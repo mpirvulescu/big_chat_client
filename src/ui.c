@@ -559,9 +559,9 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
  */
 static void on_incoming_message(const char *sender_name, const char *text,
                                 void *userdata) {
-  (void)userdata;
-
-  history_push(sender_name, text, 0);
+  const client_context *ctx = (client_context *)userdata;
+  int is_mine = (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0);
+  history_push(sender_name, text, is_mine);
 }
 
 /*
@@ -741,8 +741,8 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
 
     if (ch == ASCII_ESC) { /* ESC — leave channel */
       ctx->state = STATE_LOGGED_IN;
-      close(ctx->active_sock_fd);
-      ctx->active_sock_fd = -1;
+      // close(ctx->active_sock_fd);
+      // ctx->active_sock_fd = -1;
       delwin(msg_win);
       delwin(inp_win);
       clear();
@@ -781,7 +781,7 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
       }
 
       network_send_message(ctx, input);
-      history_push(ctx->username, input, 1);
+      // history_push(ctx->username, input, 1);
 
       memset(input, 0, sizeof(input));
       input_len = 0;
