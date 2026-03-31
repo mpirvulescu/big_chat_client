@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <netinet/in.h>
 
 // these two for network_execute_discovery
 static void send_discovery_request(client_context *ctx);
