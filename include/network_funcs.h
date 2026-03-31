@@ -1,11 +1,15 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include "client.h"
 #include "protocol.h"
 #include "ui.h"
 #include <stdint.h>
-
 
 int convert_address(client_context *ctx);
 void socket_create(client_context *ctx);
