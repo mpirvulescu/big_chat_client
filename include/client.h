@@ -3,6 +3,7 @@
 
 #include <arpa/inet.h>
 #include <stdint.h>
+#include <sys/socket.h>
 
 enum 
 {

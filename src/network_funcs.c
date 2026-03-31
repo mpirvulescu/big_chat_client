@@ -24,6 +24,12 @@ static void recv_account_creation_response(client_context *ctx);
 static void send_login_logout_request(client_context *ctx, uint8_t status_flag);
 static void recv_login_logout_response(client_context *ctx);
 
+// Ensures full buffer is received by looping until all bytes are read
+static ssize_t recv_all(int sock, void *buffer, size_t length);
+
+// Ensures full buffer is sent by handling partial send calls
+static ssize_t send_all(int sock, const void *buffer, size_t length);
+
 int convert_address(client_context *ctx) {
   memset(&ctx->addr, 0, sizeof(ctx->addr));
 
@@ -215,12 +221,12 @@ static void send_discovery_request(client_context *ctx) {
                       .body = htonl(sizeof(body))};
 
   // send header
-  if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+  if (send_all(ctx->active_sock_fd, &req, sizeof(req)) != sizeof(req)) {
     ctx->error_message = "Network Error: Failed to send discovery request.\n";
     fatal_error(ctx);
   }
   // send body
-  if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
+  if (send_all(ctx->active_sock_fd, &body, sizeof(body)) != sizeof(body)) {
     ctx->error_message = "Network Error: Failed to send discovery body.\n";
     fatal_error(ctx);
   }
@@ -231,7 +237,7 @@ static void recv_discovery_response(client_context *ctx,
   big_header_t hdr;
 
   // read header
-  ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
+  ssize_t recvd = recv_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
 
   if (recvd == 0) {
     ctx->error_message = "Server closed connection unexpectedly.\n";
@@ -268,8 +274,7 @@ static void recv_discovery_response(client_context *ctx,
   }
 
   // read body into dest
-  recvd =
-      recv(ctx->active_sock_fd, dest, sizeof(big_discovery_res_t), MSG_WAITALL);
+  recvd = recv_all(ctx->active_sock_fd, dest, sizeof(big_discovery_res_t));
 
   if (recvd != sizeof(big_discovery_res_t)) {
     ctx->error_message = "Failed to receive discovery body.\n";
@@ -297,13 +302,13 @@ static void send_account_creation_request(client_context *ctx) {
   };
 
   // send header
-  if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+  if (send_all(ctx->active_sock_fd, &req, sizeof(req)) != sizeof(req)) {
     ctx->error_message = "Network Error: Failed to send register header.\n";
     fatal_error(ctx);
   }
 
   // send body
-  if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
+  if (send_all(ctx->active_sock_fd, &body, sizeof(body)) != sizeof(body)) {
     ctx->error_message = "Network Error: Failed to send register body.\n";
     fatal_error(ctx);
   }
@@ -312,7 +317,7 @@ static void send_account_creation_request(client_context *ctx) {
 static void recv_account_creation_response(client_context *ctx) {
   big_header_t hdr;
 
-  ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
+  ssize_t recvd = recv_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
 
   if (recvd <= 0) {
     ctx->error_message = "Server disconnected during registration.\n";
@@ -360,7 +365,7 @@ static void recv_account_creation_response(client_context *ctx) {
     big_create_account_req_t resp_body;
 
     ssize_t recvd_body =
-        recv(ctx->active_sock_fd, &resp_body, sizeof(resp_body), MSG_WAITALL);
+        recv_all(ctx->active_sock_fd, &resp_body, sizeof(resp_body));
 
     if (recvd_body != (ssize_t)sizeof(resp_body)) {
       ctx->error_message = "Failed to read registration response body.\n";
@@ -380,8 +385,7 @@ static void recv_account_creation_response(client_context *ctx) {
     }
 
     // Cast bsize to size_t to match the function signature exactly
-    ssize_t recvd_body =
-        recv(ctx->active_sock_fd, junk, (size_t)bsize, MSG_WAITALL);
+    ssize_t recvd_body = recv_all(ctx->active_sock_fd, junk, (size_t)bsize);
 
     if (recvd_body != (ssize_t)bsize) {
       free(junk);
@@ -426,13 +430,13 @@ static void send_login_logout_request(client_context *ctx,
                       .body = htonl(sizeof(body))};
 
   // send header
-  if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+  if (send_all(ctx->active_sock_fd, &req, sizeof(req)) != sizeof(req)) {
     ctx->error_message = "Network Error: Failed to send login header.\n";
     fatal_error(ctx);
   }
 
   // send body
-  if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
+  if (send_all(ctx->active_sock_fd, &body, sizeof(body)) != sizeof(body)) {
     ctx->error_message = "Network Error: Failed to send login body.\n";
     fatal_error(ctx);
   }
@@ -477,7 +481,7 @@ channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
 static void recv_login_logout_response(client_context *ctx) {
   big_header_t hdr;
 
-  ssize_t recvd = recv(ctx->active_sock_fd, &hdr, sizeof(hdr), MSG_WAITALL);
+  ssize_t recvd = recv_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
 
   if (recvd <= 0) {
     ctx->error_message = "Server disconnected during login.\n";
@@ -511,8 +515,7 @@ static void recv_login_logout_response(client_context *ctx) {
       return;
     }
 
-    ssize_t recvd_body =
-        recv(ctx->active_sock_fd, junk, (size_t)bsize, MSG_WAITALL);
+    ssize_t recvd_body = recv_all(ctx->active_sock_fd, junk, (size_t)bsize);
 
     if (recvd_body != (ssize_t)bsize) {
       free(junk);
@@ -522,4 +525,40 @@ static void recv_login_logout_response(client_context *ctx) {
     }
     free(junk);
   }
+}
+
+// Ensures full buffer is received by looping until all bytes are read
+static ssize_t recv_all(int sock, void *buffer, size_t length) {
+  size_t total = 0;
+  char *buf = (char *)buffer;
+
+  while (total < length) {
+    ssize_t n = recv(sock, buf + total, length - total, 0);
+
+    if (n <= 0) {
+      return n; // error or disconnect
+    }
+
+    total += n;
+  }
+
+  return (ssize_t)total;
+}
+
+// Ensures full buffer is sent by handling partial send calls
+static ssize_t send_all(int sock, const void *buffer, size_t length) {
+  size_t total = 0;
+  const char *buf = (const char *)buffer;
+
+  while (total < length) {
+    ssize_t n = send(sock, buf + total, length - total, 0);
+
+    if (n <= 0) {
+      return n;
+    }
+
+    total += n;
+  }
+
+  return (ssize_t)total;
 }
