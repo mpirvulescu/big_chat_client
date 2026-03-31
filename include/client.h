@@ -47,6 +47,8 @@ typedef struct
 
     // user credentials
     char username[USERNAME_LENGTH];
+    char username_cache[USERNAME_LENGTH][USERNAME_LENGTH];
+    int username_cached[USERNAME_LENGTH];
     char password[PASSWORD_LENGTH];
     uint8_t account_id;
 

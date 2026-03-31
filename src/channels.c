@@ -163,6 +163,8 @@ void network_execute_channel_join(client_context *ctx, uint8_t channel_id) {
   send_channel_join_request(ctx, channel_id);
   recv_channel_join_response(ctx);
   ctx->current_channel_id = channel_id;
+  memset(ctx->username_cache, 0, sizeof(ctx->username_cache));
+  memset(ctx->username_cached, 0, sizeof(ctx->username_cached));
   // printf("Joined channel %u.\n", channel_id);
 }
 

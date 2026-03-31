@@ -120,10 +120,12 @@ void network_execute_discovery(client_context *ctx) {
   snprintf(node_ip_str, sizeof(node_ip_str), "%u.%u.%u.%u",
            response.ip_address.a, response.ip_address.b, response.ip_address.c,
            response.ip_address.d);
-  // if (inet_ntop(AF_INET, &node_ip_addr, node_ip_str, sizeof(node_ip_str)) ==
-  //     NULL) {
-  //   fatal_error(ctx, "Discovery Error: Invalid IP received from Manager.\n");
-  // }
+  // fprintf(stderr, "DEBUG: redirected to chat node: %s\n", node_ip_str);
+  //  if (inet_ntop(AF_INET, &node_ip_addr, node_ip_str, sizeof(node_ip_str)) ==
+  //      NULL) {
+  //    fatal_error(ctx, "Discovery Error: Invalid IP received from
+  //    Manager.\n");
+  //  }
 
   // printf("Redirecting to Chat Node %d at %s\n", response.server_id,
   // node_ip_str);
@@ -182,8 +184,8 @@ void network_execute_login(client_context *ctx) {
   recv_login_logout_response(ctx);
 
   // cleanup connection
-  close(ctx->active_sock_fd);
-  ctx->active_sock_fd = -1;
+  // close(ctx->active_sock_fd);
+  // ctx->active_sock_fd = -1;
 
   // printf("Login Successful.\n");
 }
@@ -442,18 +444,48 @@ static void send_login_logout_request(client_context *ctx,
   }
 }
 
+// channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
+//   channel_list_choice_t choice;
+
+//   if (convert_address(ctx) != 0) {
+//     ctx->error_message = "Invalid Server IP format.\n";
+//     fatal_error(ctx);
+//   }
+//   socket_create(ctx);
+//   socket_connect(ctx, ctx->manager_port);
+//   network_execute_channel_list(ctx);
+//   close(ctx->active_sock_fd);
+//   ctx->active_sock_fd = -1;
+
+//   if (ctx->channel_count == 0) {
+//     ctx->error_message = "No channels available on this server.\n";
+//     fatal_error(ctx);
+//   }
+
+//   choice = ui_screen_channel_list(ctx);
+
+//   if (choice.action == CHANNEL_LIST_LOGOUT) {
+//     return choice; /* skip join entirely */
+//   }
+
+//   if (convert_address(ctx) != 0) {
+//     ctx->error_message = "Invalid Server IP format.\n";
+//     fatal_error(ctx);
+//   }
+//   socket_create(ctx);
+//   socket_connect(ctx, ctx->manager_port);
+//   network_execute_channel_join(ctx, choice.channel_id);
+
+//   return choice;
+// }
+
 channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
   channel_list_choice_t choice;
 
-  if (convert_address(ctx) != 0) {
-    ctx->error_message = "Invalid Server IP format.\n";
-    fatal_error(ctx);
-  }
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
+  // fprintf(stderr, "DEBUG: sock_fd before channel list: %d\n",
+  // ctx->active_sock_fd);
+  // Reuse the socket already open from login
   network_execute_channel_list(ctx);
-  close(ctx->active_sock_fd);
-  ctx->active_sock_fd = -1;
 
   if (ctx->channel_count == 0) {
     ctx->error_message = "No channels available on this server.\n";
@@ -463,16 +495,13 @@ channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
   choice = ui_screen_channel_list(ctx);
 
   if (choice.action == CHANNEL_LIST_LOGOUT) {
-    return choice; /* skip join entirely */
+    return choice;
   }
 
-  if (convert_address(ctx) != 0) {
-    ctx->error_message = "Invalid Server IP format.\n";
-    fatal_error(ctx);
-  }
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
+  // Still on the same socket — just join directly
   network_execute_channel_join(ctx, choice.channel_id);
+  // fprintf(stderr, "DEBUG: sock_fd after channel join: %d\n",
+  // ctx->active_sock_fd);
 
   return choice;
 }
