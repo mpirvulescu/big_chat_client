@@ -39,7 +39,7 @@ static ssize_t send_all(int sock, const void *buffer, size_t length);
 int convert_address(client_context *ctx) {
   memset(&ctx->addr, 0, sizeof(ctx->addr));
 
-  struct sockaddr_in *ipv4 = (struct sockaddr_in *)&ctx->addr;
+  struct sockaddr_in *ipv4 = (struct sockaddr_in *)(void *)&ctx->addr;
 
   if (inet_pton(AF_INET, ctx->manager_ip, &ipv4->sin_addr) == 1) {
     ctx->addr.ss_family = AF_INET;
@@ -69,7 +69,7 @@ void socket_connect(client_context *ctx, uint16_t port) {
   in_port_t net_port;
   socklen_t addr_len;
 
-  struct sockaddr_in *ipv4_ptr = (struct sockaddr_in *)&ctx->addr;
+  struct sockaddr_in *ipv4_ptr = (struct sockaddr_in *)(void *)&ctx->addr;
 
   if (inet_ntop(AF_INET, &(ipv4_ptr->sin_addr), addr_str, sizeof(addr_str)) ==
       NULL) {
