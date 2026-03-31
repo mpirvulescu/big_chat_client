@@ -1,13 +1,16 @@
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <arpa/inet.h>
+
 #include "network_funcs.h"
 #include "channels.h"
 #include "client.h"
 #include "protocol.h"
 #include "ui.h"
 #include "utils.h"
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
