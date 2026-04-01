@@ -1,7 +1,6 @@
-#define _DEFAULT_SOURCE
-#define _BSD_SOURCE
+#define _POSIX_C_SOURCE 200809L
 
-// System headers FIRST
+// System headers
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -15,7 +14,7 @@
 #include <unistd.h>
 #include <stdint.h>
 
-// Project headers AFTER
+// Project headers
 #include "network_funcs.h"
 #include "channels.h"
 #include "protocol.h"
