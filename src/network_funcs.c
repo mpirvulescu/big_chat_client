@@ -1,21 +1,27 @@
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+
+// System headers FIRST
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-//#include <netdb.h>
 #include <arpa/inet.h>
-
-#include "network_funcs.h"
-#include "channels.h"
-#include "client.h"
-#include "protocol.h"
-#include "ui.h"
-#include "utils.h"
+#include <netdb.h>
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdint.h>
+
+// Project headers AFTER
+#include "network_funcs.h"
+#include "channels.h"
+#include "protocol.h"
+#include "ui.h"
+#include "utils.h"
+#include "client.h"
 
 // these two for network_execute_discovery
 static void send_discovery_request(client_context *ctx);
