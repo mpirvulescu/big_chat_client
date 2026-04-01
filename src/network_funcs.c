@@ -1,6 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
 
-// System headers
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -14,7 +13,6 @@
 #include <unistd.h>
 #include <stdint.h>
 
-// Project headers
 #include "network_funcs.h"
 #include "channels.h"
 #include "protocol.h"
@@ -22,73 +20,157 @@
 #include "utils.h"
 #include "client.h"
 
-// these two for network_execute_discovery
-static void send_discovery_request(client_context *ctx);
-static void recv_discovery_response(client_context *ctx,
-                                    big_discovery_res_t *dest);
-
-// helpers for account creation
-static void send_account_creation_request(client_context *ctx);
-static void recv_account_creation_response(client_context *ctx);
-
-// helpers for login/logout
-static void send_login_logout_request(client_context *ctx, uint8_t status_flag);
-static void recv_login_logout_response(client_context *ctx);
-
 // helpers
 static ssize_t recv_all(int sock, void *buffer, size_t length);
 static ssize_t send_all(int sock, const void *buffer, size_t length);
 
+// Socket
 
-// ✅ FIXED FUNCTION
 int convert_address(client_context *ctx) {
   memset(&ctx->addr, 0, sizeof(ctx->addr));
-
   struct sockaddr_in *ipv4 = (struct sockaddr_in *)(void *)&ctx->addr;
 
   if (inet_pton(AF_INET, ctx->manager_ip, &ipv4->sin_addr) == 1) {
     ctx->addr.ss_family = AF_INET;
     return 0;
   }
-
   return -1;
-}
-
-void fill_authentication_credentials(client_context *ctx, big_auth_t *auth) {
-  memset(auth, 0, sizeof(big_auth_t));
-  strncpy(auth->username, ctx->username, USERNAME_LENGTH - 1);
-  strncpy(auth->password, ctx->password, PASSWORD_LENGTH - 1);
 }
 
 void socket_create(client_context *ctx) {
   ctx->active_sock_fd = socket(ctx->addr.ss_family, SOCK_STREAM, 0);
+  if (ctx->active_sock_fd == -1) fatal_error(ctx);
+}
 
-  if (ctx->active_sock_fd == -1) {
-    ctx->error_message = "Fatal: Could not create socket.\n";
+void socket_connect(client_context *ctx, uint16_t port) {
+  struct sockaddr_in *ipv4 = (struct sockaddr_in *)(void *)&ctx->addr;
+  ipv4->sin_port = htons(port);
+
+  if (connect(ctx->active_sock_fd, (struct sockaddr *)ipv4,
+              sizeof(struct sockaddr_in)) == -1) {
     fatal_error(ctx);
   }
 }
 
-void socket_connect(client_context *ctx, uint16_t port) {
-  char addr_str[INET_ADDRSTRLEN];
-  in_port_t net_port;
-  socklen_t addr_len;
+void fill_authentication_credentials(client_context *ctx, big_auth_t *auth) {
+  memset(auth, 0, sizeof(*auth));
+  strncpy(auth->username, ctx->username, USERNAME_LENGTH - 1);
+  strncpy(auth->password, ctx->password, PASSWORD_LENGTH - 1);
+}
 
-  struct sockaddr_in *ipv4_ptr = (struct sockaddr_in *)(void *)&ctx->addr;
+// Discovery
 
-  if (inet_ntop(AF_INET, &(ipv4_ptr->sin_addr), addr_str, sizeof(addr_str)) ==
-      NULL) {
-    ctx->error_message = "Fatal: internal address error.\n";
+void network_execute_discovery(client_context *ctx) {
+  convert_address(ctx);
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+
+  // simple dummy discovery (server should respond properly)
+  big_header_t hdr = {
+      .version = BIG_CHAT_VERSION,
+      .type = TYPE_DISCOVERY_REQUEST,
+      .status = 0,
+      .reserved = 0,
+      .body = htonl(0)};
+
+  send_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
+
+  big_header_t resp;
+  if (recv_all(ctx->active_sock_fd, &resp, sizeof(resp)) <= 0) {
     fatal_error(ctx);
   }
+}
 
-  net_port = htons(port);
-  ipv4_ptr->sin_port = net_port;
-  addr_len = sizeof(struct sockaddr_in);
+// account creation
 
-  if (connect(ctx->active_sock_fd, (struct sockaddr *)ipv4_ptr, addr_len) ==
-      -1) {
-    ctx->error_message = "Fatal: Could not connect to server.\n";
-    fatal_error(ctx);
+void network_execute_account_creation(client_context *ctx) {
+  big_create_account_req_t body;
+  memset(&body, 0, sizeof(body));
+
+  fill_authentication_credentials(ctx, &body.authentication);
+
+  big_header_t hdr = {
+      .version = BIG_CHAT_VERSION,
+      .type = TYPE_ACCOUNT_CREATE_REQUEST,
+      .status = 0,
+      .reserved = 0,
+      .body = htonl(sizeof(body))};
+
+  send_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
+  send_all(ctx->active_sock_fd, &body, sizeof(body));
+
+  big_header_t resp;
+  recv_all(ctx->active_sock_fd, &resp, sizeof(resp));
+}
+
+// Login
+
+void network_execute_login(client_context *ctx) {
+  big_login_logout_req_t body;
+  memset(&body, 0, sizeof(body));
+
+  fill_authentication_credentials(ctx, &body.authentication);
+  body.status = 1;
+
+  big_header_t hdr = {
+      .version = BIG_CHAT_VERSION,
+      .type = TYPE_LOGIN_OR_LOGOUT_REQUEST,
+      .status = 0,
+      .reserved = 0,
+      .body = htonl(sizeof(body))};
+
+  send_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
+  send_all(ctx->active_sock_fd, &body, sizeof(body));
+
+  big_header_t resp;
+  recv_all(ctx->active_sock_fd, &resp, sizeof(resp));
+}
+
+// Channel phase
+
+channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
+  network_execute_channel_list(ctx);
+  return ui_screen_channel_list(ctx);
+}
+
+// Logout
+
+void network_execute_logout(client_context *ctx) {
+  big_login_logout_req_t body;
+  memset(&body, 0, sizeof(body));
+
+  fill_authentication_credentials(ctx, &body.authentication);
+  body.status = 0;
+
+  big_header_t hdr = {
+      .version = BIG_CHAT_VERSION,
+      .type = TYPE_LOGIN_OR_LOGOUT_REQUEST,
+      .status = 0,
+      .reserved = 0,
+      .body = htonl(sizeof(body))};
+
+  send_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
+  send_all(ctx->active_sock_fd, &body, sizeof(body));
+}
+
+// Helpers
+
+static ssize_t recv_all(int sock, void *buffer, size_t length) {
+  size_t total = 0;
+  while (total < length) {
+    ssize_t n = recv(sock, (char *)buffer + total, length - total, 0);
+    if (n <= 0) return n;
+    total += n;
   }
+  return total;
+}
+
+static ssize_t send_all(int sock, const void *buffer, size_t length) {
+  size_t total = 0;
+  while (total < length) {
+    ssize_t n = send(sock, (char *)buffer + total, length - total, 0);
+    if (n <= 0) return n;
+    total += n;
+  }
+  return total;
 }
