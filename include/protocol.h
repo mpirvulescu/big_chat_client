@@ -9,6 +9,12 @@
 #include "client.h"
 #include <stdint.h>
 
+#ifdef __GNUC__
+#define PACKED __attribute__((packed))
+#else
+#define PACKED
+#endif
+
 typedef enum 
 {
     BIG_CHAT_VERSION = 0x02,
@@ -53,7 +59,7 @@ typedef enum
 
 
 // 8-byte fixed header
-typedef struct __attribute__((packed)){
+typedef struct PACKED{
     uint8_t  version;   
     uint8_t  type;      
     uint8_t  status;    
@@ -61,43 +67,43 @@ typedef struct __attribute__((packed)){
     uint32_t body; 
 } big_header_t;
 
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     uint8_t a, b, c, d;
 } ipv4_address_t;
 
 // body for discovery response (Type 0x0B)
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     ipv4_address_t ip_address;
     uint8_t  server_id;  
 } big_discovery_res_t;
 
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     char username[USERNAME_LENGTH];
     char password[PASSWORD_LENGTH];
 } big_auth_t;
 
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     big_auth_t authentication;
     char target_username[USERNAME_LENGTH];
     uint8_t user_id;
 } big_user_info_t;
 
 //body for account creation (type 0x10)
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     big_auth_t authentication;
     uint8_t  client_id;
     // uint8_t  status; // 0x01 for create?  // DG: I am removing this for now to match spec
 } big_create_account_req_t;
 
 //body for login/logout (type 0x14)
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     big_auth_t authentication;
     ipv4_address_t client_ip;                  // 4 bytes (network byte order)
     uint8_t  status;                     // 1 byte (1=login, 0=logout)
 } big_login_logout_req_t;
 
 //body for channel info
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     big_auth_t authentication;
     char channel_name[CHANNEL_NAME_LENGTH];
     uint8_t channel_id;
@@ -106,13 +112,13 @@ typedef struct __attribute__((packed)) {
 } big_channel_info_t;
 
 //body for channel lists
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     big_auth_t authentication;
     uint8_t channel_id_length;
     uint8_t channel_id_array[];
 } big_channel_list_t;
 
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     big_auth_t authentication;
     uint64_t timestamp;
     uint16_t message_length;
@@ -120,7 +126,7 @@ typedef struct __attribute__((packed)) {
     char message[];
 } big_send_message_t;
 
-typedef struct __attribute__((packed)) {
+typedef struct PACKED {
     big_auth_t authentication;
     uint64_t timestamp;
     uint16_t message_length;
