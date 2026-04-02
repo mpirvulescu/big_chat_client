@@ -65,11 +65,19 @@ void network_send_message(client_context *ctx, const char *text) {
     fatal_error(ctx);
   }
 
-  big_header_t hdr = {.version = BIG_CHAT_VERSION,
-                      .type = TYPE_SEND_MESSAGE_REQUEST,
-                      .status = STATUS_OK,
-                      .reserved = 0,
-                      .body = htonl((uint32_t)body_size)};
+  // big_header_t hdr = {.version = BIG_CHAT_VERSION,
+  //                     .type = TYPE_SEND_MESSAGE_REQUEST,
+  //                     .status = STATUS_OK,
+  //                     .reserved = 0,
+  //                     .body = htonl((uint32_t)body_size)};
+
+  big_header_t hdr;
+  memset(&hdr, 0, sizeof(hdr)); // Explicitly zero all bytes, including padding
+  hdr.version = BIG_CHAT_VERSION;
+  hdr.type = TYPE_SEND_MESSAGE_REQUEST;
+  hdr.status = STATUS_OK;
+  hdr.reserved = 0;
+  hdr.body = htonl((uint32_t)body_size);
 
   big_send_message_t body = {0};
   fill_authentication_credentials(ctx, &body.authentication);
