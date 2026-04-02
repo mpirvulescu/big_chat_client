@@ -11,14 +11,6 @@
 #include <byteswap.h>
 #endif
 
-#ifndef htobe64
-#if __BYTE_ORDER == __LITTLE_ENDIAN
-#define htobe64(x) __bswap64(x)
-#else
-#define htobe64(x) (x)
-#endif
-#endif
-
 void cleanup_client(client_context *ctx);
 
 void print_usage(client_context *ctx);
