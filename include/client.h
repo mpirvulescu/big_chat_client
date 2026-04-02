@@ -1,11 +1,12 @@
 #ifndef CLIENT_H
 #define CLIENT_H
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
+#include "types.h"
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <stdint.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
 enum 
 {
@@ -31,7 +32,7 @@ typedef enum
     STATE_EXITING
 } client_state;
 
-typedef struct 
+struct client_context
 {
     int argc;
     char **argv;
@@ -63,6 +64,6 @@ typedef struct
 
     int in_messaging_loop;
 
-} client_context;
+} ;
 
 #endif /*CLIENT_H*/

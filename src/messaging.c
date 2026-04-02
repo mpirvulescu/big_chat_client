@@ -1,26 +1,50 @@
-// #define _DEFAULT_SOURCE // NOLINT(bugprone-reserved-identifier, cert-dcl37-c,
+// // #define _DEFAULT_SOURCE // NOLINT(bugprone-reserved-identifier,
+// cert-dcl37-c,
+// // cert-dcl51-cpp)
+// #include "messaging.h"
+// #include "network_funcs.h"
+// #include "protocol.h"
+// #include "utils.h"
+// #include <arpa/inet.h>
+// // #include <endian.h>
+// #if defined(__FreeBSD__)
+// #include <byteswap.h>
+// #include <sys/endian.h>
+// #else
+// #include <endian.h>
+// #endif
+// #include <errno.h>
+// #include <poll.h>
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include <string.h>
+// #include <sys/socket.h>
+// #include <sys/time.h>
+// #include <time.h>
+// #include <unistd.h>
+
+#define _DEFAULT_SOURCE // NOLINT(bugprone-reserved-identifier, cert-dcl37-c,
                         // cert-dcl51-cpp)
 #include "messaging.h"
 #include "network_funcs.h"
 #include "protocol.h"
 #include "utils.h"
 #include <arpa/inet.h>
-// #include <endian.h>
-#if defined(__FreeBSD__)
+#include <errno.h>
+#ifdef __FreeBSD__
 #include <sys/endian.h>
-#include <byteswap.h>
 #else
 #include <endian.h>
 #endif
-#include <errno.h>
 #include <poll.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/time.h>
 
 static void discard_body(client_context *ctx, uint32_t body_size);
 
@@ -110,6 +134,11 @@ int network_receive_pending(client_context *ctx,
     if (recvd != (ssize_t)body_size) {
       free(msg);
       return -1;
+    }
+
+    if (msg->channel_id != ctx->current_channel_id) {
+      free(msg);
+      return 0;
     }
 
     // if (msg->sender_id == ctx->account_id) {

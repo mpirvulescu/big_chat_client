@@ -14,10 +14,12 @@ static ssize_t recv_all(int sock, void *buf, size_t len) {
   size_t total = 0;
   while (total < len) {
     ssize_t n = recv(sock, (char *)buf + total, len - total, 0);
-    if (n <= 0) return n;
+    if (n <= 0) {
+      return n;
+    }
     total += n;
   }
-  return total;
+  return (ssize_t)total;
 }
 
 // main helper functions
@@ -96,8 +98,7 @@ static void recv_channel_list_response(client_context *ctx) {
 
 static void receive_header_for_channel_list(client_context *ctx,
                                             big_header_t *header) {
-  ssize_t recvd =
-      recv_all(ctx->active_sock_fd, header, sizeof(big_header_t));
+  ssize_t recvd = recv_all(ctx->active_sock_fd, header, sizeof(big_header_t));
 
   if (recvd <= 0) {
     ctx->error_message = "Server closed connection unexpectedly.\n";

@@ -15,10 +15,12 @@ static ssize_t recv_all(int sock, void *buffer, size_t length) {
   size_t total = 0;
   while (total < length) {
     ssize_t n = recv(sock, (char *)buffer + total, length - total, 0);
-    if (n <= 0) return n;
+    if (n <= 0) {
+      return n;
+    }
     total += n;
   }
-  return total;
+  return (ssize_t)total;
 }
 
 // these two for network_execute_discovery
@@ -280,8 +282,7 @@ static void recv_discovery_response(client_context *ctx,
   }
 
   // read body into dest
-  recvd =
-      recv_all(ctx->active_sock_fd, dest, sizeof(big_discovery_res_t));
+  recvd = recv_all(ctx->active_sock_fd, dest, sizeof(big_discovery_res_t));
 
   if (recvd != sizeof(big_discovery_res_t)) {
     ctx->error_message = "Failed to receive discovery body.\n";
@@ -392,8 +393,7 @@ static void recv_account_creation_response(client_context *ctx) {
     }
 
     // Cast bsize to size_t to match the function signature exactly
-    ssize_t recvd_body =
-        recv_all(ctx->active_sock_fd, junk, (size_t)bsize);
+    ssize_t recvd_body = recv_all(ctx->active_sock_fd, junk, (size_t)bsize);
 
     if (recvd_body != (ssize_t)bsize) {
       free(junk);
@@ -550,8 +550,7 @@ static void recv_login_logout_response(client_context *ctx) {
       return;
     }
 
-    ssize_t recvd_body =
-        recv_all(ctx->active_sock_fd, junk, (size_t)bsize);
+    ssize_t recvd_body = recv_all(ctx->active_sock_fd, junk, (size_t)bsize);
 
     if (recvd_body != (ssize_t)bsize) {
       free(junk);
