@@ -27,4 +27,8 @@ void network_execute_login(client_context *ctx);
 
 void network_execute_logout(client_context *ctx);
 
+void network_execute_delete_account(client_context *ctx);
+// static void send_delete_account_request(client_context *ctx);
+// static void recv_delete_account_response(client_context *ctx);
+
 #endif /*NETWORK.H*/

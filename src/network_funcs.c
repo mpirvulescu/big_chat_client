@@ -11,17 +11,17 @@
 #include <string.h>
 #include <unistd.h>
 
-static ssize_t recv_all(int sock, void *buffer, size_t length) {
-  size_t total = 0;
-  while (total < length) {
-    ssize_t n = recv(sock, (char *)buffer + total, length - total, 0);
-    if (n <= 0) {
-      return n;
-    }
-    total += n;
-  }
-  return (ssize_t)total;
-}
+// static ssize_t recv_all(int sock, void *buffer, size_t length) {
+//   size_t total = 0;
+//   while (total < length) {
+//     ssize_t n = recv(sock, (char *)buffer + total, length - total, 0);
+//     if (n <= 0) {
+//       return n;
+//     }
+//     total += n;
+//   }
+//   return (ssize_t)total;
+// }
 
 // these two for network_execute_discovery
 static void send_discovery_request(client_context *ctx);
@@ -35,6 +35,12 @@ static void recv_account_creation_response(client_context *ctx);
 // helpers for login/logout
 static void send_login_logout_request(client_context *ctx, uint8_t status_flag);
 static void recv_login_logout_response(client_context *ctx);
+
+static ssize_t recv_all(int sock, void *buffer, size_t length);
+
+// for delete account
+static void send_delete_account_request(client_context *ctx);
+static void recv_delete_account_response(client_context *ctx);
 
 int convert_address(client_context *ctx) {
   memset(&ctx->addr, 0, sizeof(ctx->addr));
@@ -505,7 +511,7 @@ channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
   }
 
   // Still on the same socket — just join directly
-  network_execute_channel_join(ctx, choice.channel_id);
+  // network_execute_channel_join(ctx, choice.channel_id);
   // fprintf(stderr, "DEBUG: sock_fd after channel join: %d\n",
   // ctx->active_sock_fd);
 
@@ -559,5 +565,93 @@ static void recv_login_logout_response(client_context *ctx) {
       return;
     }
     free(junk);
+  }
+}
+
+static ssize_t recv_all(int sock, void *buffer, size_t length) {
+  size_t total = 0;
+
+  while (total < length) {
+    ssize_t n = recv(sock, (char *)buffer + total, length - total, 0);
+
+    if (n == 0) {
+      return 0;
+    }
+
+    if (n < 0) {
+      return -1;
+    }
+
+    total += (size_t)n;
+  }
+
+  return (ssize_t)total;
+}
+
+void network_execute_delete_account(client_context *ctx) {
+
+  if (convert_address(ctx) != 0) {
+    ctx->error_message = "Invalid Server IP format.\n";
+    fatal_error(ctx);
+  }
+
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+
+  send_delete_account_request(ctx);
+  recv_delete_account_response(ctx);
+
+  close(ctx->active_sock_fd);
+  ctx->active_sock_fd = -1;
+
+  ctx->state = STATE_EXITING;
+}
+
+static void send_delete_account_request(client_context *ctx) {
+
+  big_delete_account_t body = {0};
+  fill_authentication_credentials(ctx, &body.authentication);
+
+  big_header_t req = {.version = BIG_CHAT_VERSION,
+                      .type = TYPE_DELETE_ACCOUNT_REQUEST,
+                      .status = 0,
+                      .reserved = 0,
+                      .body = htonl(sizeof(body))};
+
+  if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+    ctx->error_message = "Failed to send delete account header.\n";
+    fatal_error(ctx);
+  }
+
+  if (send(ctx->active_sock_fd, &body, sizeof(body), 0) != sizeof(body)) {
+    ctx->error_message = "Failed to send delete account body.\n";
+    fatal_error(ctx);
+  }
+}
+
+static void recv_delete_account_response(client_context *ctx) {
+
+  big_header_t hdr;
+
+  ssize_t recvd = recv_all(ctx->active_sock_fd, &hdr, sizeof(hdr));
+
+  if (recvd <= 0) {
+    ctx->error_message = "Server disconnected during delete.\n";
+    fatal_error(ctx);
+  }
+
+  if (recvd != sizeof(hdr)) {
+    ctx->error_message = "Incomplete delete response.\n";
+    fatal_error(ctx);
+  }
+
+  if (hdr.type != TYPE_DELETE_ACCOUNT_RESPONSE) {
+    ctx->error_message = "Protocol Error: Unexpected delete response.\n";
+    fatal_error(ctx);
+  }
+
+  if (hdr.status != STATUS_OK) {
+    ctx->error_message = "Delete account failed.\n";
+    fatal_error(ctx);
   }
 }

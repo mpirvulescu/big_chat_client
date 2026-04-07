@@ -1,7 +1,9 @@
 #ifndef UI_H
 #define UI_H
- 
-#include "client.h"
+
+typedef struct client_context client_context;
+
+// #include "client.h"
 #include <stdint.h>
 
 typedef enum {
@@ -17,6 +19,7 @@ typedef enum {
 typedef enum {
     CHANNEL_LIST_JOIN,
     CHANNEL_LIST_LOGOUT,
+    CHANNEL_LIST_DELETE
 } channel_list_result_t;
 
 typedef struct {
@@ -72,5 +75,7 @@ channel_list_choice_t  ui_screen_channel_list(client_context *ctx);
  *   STATE_LOGGED_IN.
  */
 chat_exit_reason_t    ui_screen_chat(client_context *ctx);
+
+int ui_confirm_delete_account(void);
  
 #endif /* UI_H */

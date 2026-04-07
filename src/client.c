@@ -39,6 +39,13 @@ int main(int argc, char **argv) {
   run_account_creation_phase(&ctx);
   run_login_phase(&ctx);
   run_channel_phase(&ctx);
+
+  if (ctx.last_action == CHANNEL_LIST_DELETE) {
+    network_execute_delete_account(&ctx);
+    ui_teardown();
+    quit(&ctx);
+  }
+
   /*bug when logging out, removing for now*/
   // run_messaging_phase(&ctx);
   run_logout_phase(&ctx);
@@ -164,9 +171,12 @@ static int run_channel_phase(client_context *ctx) {
     channel_list_choice_t choice;
     ctx->state = STATE_LOGGED_IN;
     choice = network_execute_channel_phase(ctx);
-    if (choice.action == CHANNEL_LIST_LOGOUT) {
+    if (choice.action == CHANNEL_LIST_LOGOUT ||
+        choice.action == CHANNEL_LIST_DELETE) {
+      ctx->last_action = choice.action;
       break;
     }
+    network_execute_channel_join(ctx, choice.channel_id);
     ctx->state = STATE_MESSAGING;
     chat_reason = ui_screen_chat(ctx);
   } while (chat_reason == CHAT_EXIT_CHANNEL_LIST);

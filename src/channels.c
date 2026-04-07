@@ -170,13 +170,22 @@ static void receive_body_for_channel_list(client_context *ctx,
 }
 
 void network_execute_channel_join(client_context *ctx, uint8_t channel_id) {
-  // printf("Joining channel %u...\n", channel_id);
+
+  if (convert_address(ctx) != 0) {
+    ctx->error_message = "Invalid Server IP format.\n";
+    fatal_error(ctx);
+  }
+
+  socket_create(ctx);
+  socket_connect(ctx, ctx->manager_port);
+
   send_channel_join_request(ctx, channel_id);
   recv_channel_join_response(ctx);
+
   ctx->current_channel_id = channel_id;
+
   memset(ctx->username_cache, 0, sizeof(ctx->username_cache));
   memset(ctx->username_cached, 0, sizeof(ctx->username_cached));
-  // printf("Joined channel %u.\n", channel_id);
 }
 
 static void send_channel_join_request(client_context *ctx, uint8_t channel_id) {

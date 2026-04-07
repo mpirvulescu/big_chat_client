@@ -2,6 +2,7 @@
 #define CLIENT_H
 
 #include "types.h"
+#include "ui.h"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdint.h>
@@ -63,6 +64,8 @@ struct client_context
     uint8_t current_channel_id;
 
     int in_messaging_loop;
+
+    channel_list_result_t last_action;
 
 } ;
 

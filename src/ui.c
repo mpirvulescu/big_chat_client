@@ -424,7 +424,8 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
 
   snprintf(title_right, sizeof(title_right), "User: %s", ctx->username);
   draw_title("BIG Chat  -  Channels", title_right);
-  ui_set_status("Up/Down: navigate   Enter: join channel   Q: logout");
+  ui_set_status(
+      "Up/Down: navigate   Enter: join channel   Q: logout  D: delete account");
 
   list_h = LINES - 2;
   list_w = DEFAULT_LIST_WIDTH;
@@ -527,6 +528,23 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
       touchwin(win);
       wnoutrefresh(win);
       doupdate();
+    } else if (ch == 'd' || ch == 'D') {
+      int confirm = ui_confirm_delete_account();
+
+      if (confirm) {
+        channel_list_choice_t delete_result;
+        delete_result.action = CHANNEL_LIST_DELETE;
+        delete_result.channel_id = 0;
+
+        delwin(win);
+        clear();
+        refresh();
+        return delete_result;
+      }
+
+      touchwin(win);
+      wnoutrefresh(win);
+      doupdate();
     } else if (ch == '\n' || ch == KEY_ENTER) {
       if (count > 0 && selected >= 0) {
         break;
@@ -546,6 +564,35 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
     clear();
     refresh();
     return result;
+  }
+}
+
+int ui_confirm_delete_account(void) {
+
+  WINDOW *confirm = make_box(CONFIRM_BOX_H, CONFIRM_BOX_W, "Delete Account");
+
+  mvwprintw(confirm, 2, 3, "Are you sure you want to delete?");
+  mvwprintw(confirm, 3, CONFIRM_BTN_COL, "[Y] Yes        [N] No");
+
+  wnoutrefresh(confirm);
+  doupdate();
+
+  for (;;) {
+    int ch = wgetch(confirm);
+
+    if (ch == 'y' || ch == 'Y') {
+      delwin(confirm);
+      clear();
+      refresh();
+      return 1;
+    }
+
+    if (ch == 'n' || ch == 'N') {
+      delwin(confirm);
+      clear();
+      refresh();
+      return 0;
+    }
   }
 }
 
