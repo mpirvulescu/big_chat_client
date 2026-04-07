@@ -27,6 +27,8 @@ typedef enum
     TYPE_GET_USER_INFO_RESPONSE = 0x13,
     TYPE_LOGIN_OR_LOGOUT_REQUEST           = 0x14,
     TYPE_LOGIN_OR_LOGOUT_RESPONSE           = 0x15,
+    TYPE_DELETE_ACCOUNT_REQUEST  = 0x16,
+    TYPE_DELETE_ACCOUNT_RESPONSE = 0x17,
     TYPE_GET_CHANNEL_INFO_REQUEST = 0x22,
     TYPE_GET_CHANNEL_INFO_RESPONSE = 0x23,
     TYPE_LIST_ALL_CHANNELS_REQUEST = 0x2A,
@@ -136,5 +138,8 @@ typedef struct PACKED {
     char message[];
 } big_get_message_t;
 
+typedef struct PACKED {
+    big_auth_t authentication;
+} big_delete_account_t;
 
 #endif
