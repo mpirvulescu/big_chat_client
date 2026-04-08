@@ -16,9 +16,13 @@
 #define PACKED
 #endif
 
+enum {
+    BYTES_FOR_PACKING_END_OF_CHAT_HISTORY_REQUEST = 3
+};
+
 typedef enum 
 {
-    BIG_CHAT_VERSION = 0x02,
+    BIG_CHAT_VERSION = 0x03,
     TYPE_DISCOVERY_REQUEST       = 0x0A,
     TYPE_DISCOVERY_RESPONSE       = 0x0B,
     TYPE_ACCOUNT_CREATE_REQUEST  = 0x10,
@@ -36,7 +40,13 @@ typedef enum
     TYPE_SEND_MESSAGE_REQUEST = 0x30,
     TYPE_SEND_MESSAGE_RESPONSE = 0x31, 
     TYPE_GET_MESSAGE_REQUEST = 0x32,
-    TYPE_GET_MESSAGE_RESPONSE = 0x33
+    TYPE_GET_MESSAGE_RESPONSE = 0x33,
+    TYPE_EDIT_MESSAGE_REQUEST = 0x34,
+    TYPE_EDIT_MESSAGE_RESPONSE = 0x35,
+    TYPE_DELETE_MESSAGE_REQUEST = 0x36,
+    TYPE_DELETE_MESSAGE_RESPONSE = 0x37,
+    TYPE_GET_HISTORY_REQUEST = 0x3A,
+    TYPE_GET_HISTORY_RESPONSE = 0x3B
 } big_chat_message_t;
 
 // RFC Section 4.3 — Status codes
@@ -62,7 +72,7 @@ typedef enum
 
 
 // 8-byte fixed header
-typedef struct PACKED{
+typedef struct PACKED {
     uint8_t  version;   
     uint8_t  type;      
     uint8_t  status;    
@@ -137,6 +147,29 @@ typedef struct PACKED {
     uint8_t sender_id;
     char message[];
 } big_get_message_t;
+
+typedef struct PACKED {
+    big_auth_t authentication;
+    uint64_t timestamp;
+    uint16_t message_length;
+    uint8_t channel_id;
+    char message[];
+} big_edit_message_t;
+
+typedef struct PACKED {
+    big_auth_t authentication;
+    uint64_t timestamp;
+    uint8_t channel_id;
+} big_delete_message_t;
+
+typedef struct PACKED {
+    big_auth_t authentication;
+    uint64_t   start_timestamp;
+    uint16_t   result_len_limit;
+    uint16_t   result_len;
+    uint8_t    channel_id;
+    uint8_t    reserved[BYTES_FOR_PACKING_END_OF_CHAT_HISTORY_REQUEST];
+} big_get_history_t;
 
 typedef struct PACKED {
     big_auth_t authentication;
