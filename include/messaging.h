@@ -14,12 +14,12 @@ enum {
 
 void network_execute_messaging_loop(client_context *ctx);
 
-void network_send_message(client_context *ctx, const char *text);
+uint64_t network_send_message(client_context *ctx, const char *text);
 
 int network_receive_pending(client_context *ctx,
                             void (*on_message)(const char *sender_name,
                                                const char *text,
-                                               void *userdata),
+                                               const void *userdata),
                             void *userdata);
 
 void lookup_username(client_context *ctx, uint8_t sender_id, char *out_name,
@@ -28,7 +28,7 @@ void lookup_username(client_context *ctx, uint8_t sender_id, char *out_name,
 void network_fetch_history(client_context *ctx,
                            void (*on_message)(const char *sender_name,
                                               const char *text,
-                                              void       *userdata,
+                                              const void       *userdata,
                                               uint64_t    timestamp,
                                               uint8_t     sender_id),
                            void *userdata,

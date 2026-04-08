@@ -1,22 +1,3 @@
-/*
- * ui.c — ncurses frontend for BIG Chat client
- *
- * Compile: gcc ... ui.c -lncurses
- *
- * Design rules enforced by the project build flags:
- *   - Every static function is forward-declared before its definition.
- *   - No variable-length arrays.
- *   - No implicit narrowing: every int->uint8_t, int->char conversion is
- *     an explicit cast.
- *   - No sign/unsigned mixing in comparisons: loop variables over uint8_t
- *     counts cast the count to int at the loop boundary.
- *   - No aggregate (struct) returns.
- *   - All format strings passed to mvwprintw/wprintw are string literals.
- *     When printing a runtime string use wprintw(win, "%s", str).
- *   - ui_set_status carries __attribute__((format)) so callers are checked.
- *   - No shadowed variable names across any scope boundary.
- */
-
 #include "ui.h"
 #include "client.h"
 #include "messaging.h"
@@ -44,9 +25,10 @@ enum {
 };
 
 enum {
-  INPUT_MAX = 1020,     /* max bytes the user may type in one go    */
-  HISTORY_MAX = 512,    /* ring-buffer depth for received messages  */
-  POLL_TIMEOUT_MS = 100 /* socket poll interval while in chat       */
+  INPUT_MAX = 1020,      /* max bytes the user may type in one go    */
+  HISTORY_MAX = 512,     /* ring-buffer depth for received messages  */
+  POLL_TIMEOUT_MS = 100, /* socket poll interval while in chat       */
+  HISTORY_FETCH = 200    /* messages to request from server on join  */
 };
 
 enum {
@@ -58,28 +40,30 @@ enum {
   ERRMSG_BUF_SIZE = 80,
   TITLE_RIGHT_BUF_SIZE = 48,
   DEFAULT_LIST_WIDTH = 40,
-  PREFIX_RESERVE = 10
+  PREFIX_RESERVE = 14, /* space for "[username]: " prefix */
+  ASCII_CTRL_AND_U = 21
 };
 
-enum {
-  CONFIRM_BOX_H = 5,
-  CONFIRM_BOX_W = 36,
-  CONFIRM_BTN_COL = 10,
-};
+enum { CONFIRM_BOX_H = 5, CONFIRM_BOX_W = 36, CONFIRM_BTN_COL = 10 };
 
 /* -------------------------------------------------------------------------
  * Chat-history ring buffer
  * ---------------------------------------------------------------------- */
 
 typedef struct {
-  int is_mine; /* 1 = sent by us, 0 = received         */
+  uint64_t timestamp;
+  int is_mine;
+  int is_deleted;
+  uint8_t sender_id;
   char sender_name[USERNAME_LENGTH];
   char text[INPUT_MAX + 1];
 } chat_line_t;
 
-static chat_line_t s_history[HISTORY_MAX];                           // NOLINT
-static int s_history_total = 0; /* total ever added (unbounded)   */ // NOLINT
-static int s_scroll_offset = 0; /* 0 = bottom; >0 = scrolled up   */ // NOLINT
+static chat_line_t s_history[HISTORY_MAX];                             // NOLINT
+static int s_history_total = 0; /* total ever added (unbounded)    */  // NOLINT
+static int s_scroll_offset = 0; /* 0 = bottom; >0 = scrolled up   */   // NOLINT
+static int s_select_mode = 0; /* 0 = normal, 1 = select mode     */    // NOLINT
+static int s_selected_index = 0; /* absolute index into ring buffer */ // NOLINT
 
 /* -------------------------------------------------------------------------
  * Persistent global windows
@@ -92,22 +76,27 @@ static WINDOW *s_status_win = NULL; // NOLINT
  * Forward declarations for all static helpers
  * ---------------------------------------------------------------------- */
 
-static void history_push(const char *sender_name, const char *text,
-                         int is_mine);
+static void history_push(const char *sender_name, const char *text, int is_mine,
+                         uint64_t timestamp, uint8_t sender_id);
 static void history_clear(void);
 static void draw_title(const char *left, const char *right);
 static WINDOW *make_box(int height, int width, const char *title);
 static void draw_history(WINDOW *msg_win, int msg_h, int msg_w);
 static void on_incoming_message(const char *sender_name, const char *text,
-                                void *userdata);
+                                const void *userdata);
+static void on_history_message(const char *sender_name, const char *text,
+                               const void *userdata, uint64_t timestamp,
+                               uint8_t sender_id);
 static void chat_poll_socket(client_context *ctx);
+static int chat_edit_selected(client_context *ctx, WINDOW *inp_win, int msg_h);
+static void chat_delete_selected(client_context *ctx);
 
 /* -------------------------------------------------------------------------
  * History helpers
  * ---------------------------------------------------------------------- */
 
-static void history_push(const char *sender_name, const char *text,
-                         int is_mine) {
+static void history_push(const char *sender_name, const char *text, int is_mine,
+                         uint64_t timestamp, uint8_t sender_id) {
   int idx = s_history_total % HISTORY_MAX;
 
   if (sender_name != NULL) {
@@ -119,8 +108,12 @@ static void history_push(const char *sender_name, const char *text,
   }
 
   s_history[idx].is_mine = is_mine;
+  s_history[idx].is_deleted = 0;
+  s_history[idx].timestamp = timestamp;
+  s_history[idx].sender_id = sender_id;
   strncpy(s_history[idx].text, text, INPUT_MAX);
   s_history[idx].text[INPUT_MAX] = '\0';
+
   s_history_total++;
   s_scroll_offset = 0; /* new message — snap back to bottom */
 }
@@ -129,6 +122,26 @@ static void history_clear(void) {
   memset(s_history, 0, sizeof(s_history));
   s_history_total = 0;
   s_scroll_offset = 0;
+  s_select_mode = 0;
+  s_selected_index = 0;
+}
+
+/*
+ * Return the chat_line_t* for absolute index i (0 = oldest in ring).
+ * Returns NULL if i is out of range.
+ */
+static chat_line_t *history_get(int i) {
+  int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+  if (i < 0 || i >= total) {
+    return NULL;
+  }
+  /* When total < HISTORY_MAX the ring has not wrapped; oldest is index 0.
+     When total >= HISTORY_MAX the oldest slot is (s_history_total %
+     HISTORY_MAX). */
+  int base =
+      (s_history_total >= HISTORY_MAX) ? (s_history_total % HISTORY_MAX) : 0;
+  int idx = (base + i) % HISTORY_MAX;
+  return &s_history[idx];
 }
 
 /* -------------------------------------------------------------------------
@@ -227,8 +240,6 @@ static void draw_title(const char *left, const char *right) {
 
 /* -------------------------------------------------------------------------
  * Internal: make_box
- * Creates a bordered window centred on the screen.
- * Caller must delwin() the returned pointer.
  * ---------------------------------------------------------------------- */
 
 static WINDOW *make_box(int height, int width, const char *title) {
@@ -261,7 +272,6 @@ static WINDOW *make_box(int height, int width, const char *title) {
 
 credentials_result_t ui_screen_credentials(client_context *ctx,
                                            const char *phase) {
-  /* Field geometry inside the box */
   const int BOX_H = 10;
   const int BOX_W = 46;
   const int LABEL_COL = 3;
@@ -274,16 +284,16 @@ credentials_result_t ui_screen_credentials(client_context *ctx,
   char errmsg[ERRMSG_BUF_SIZE];
   char uname[USERNAME_LENGTH];
   char pword[PASSWORD_LENGTH];
-  int active; /* 0 = username field, 1 = password field */
+  int active;
   int ulen;
   int plen;
   int field_w;
   WINDOW *win;
 
-  snprintf(title_left, sizeof(title_left), "BIG Chat  \xe2\x80\x94  %s", phase);
+  snprintf(title_left, sizeof(title_left), "BIG Chat  —  %s", phase);
   draw_title(title_left, "Tab: next field   Enter: submit");
-  ui_set_status("Enter your credentials and press Enter to %s.  Already have "
-                "an account? Press F2 to skip!",
+  ui_set_status("Enter your credentials and press Enter to %s.  "
+                "Already have an account? Press F2 to skip!",
                 phase);
 
   memset(uname, 0, sizeof(uname));
@@ -301,7 +311,6 @@ credentials_result_t ui_screen_credentials(client_context *ctx,
     int uhl = (active == 0) ? A_REVERSE : 0;
     int phl = (active == 1) ? A_REVERSE : 0;
 
-    /* --- username label & field --- */
     wattron(win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
     mvwprintw(win, UROW, LABEL_COL, "Username:");
     wattroff(win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
@@ -315,7 +324,6 @@ credentials_result_t ui_screen_credentials(client_context *ctx,
       wattroff(win, A_REVERSE);
     }
 
-    /* --- password label & field (masked) --- */
     wattron(win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
     mvwprintw(win, PROW, LABEL_COL, "Password:");
     wattroff(win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
@@ -334,14 +342,12 @@ credentials_result_t ui_screen_credentials(client_context *ctx,
       wattroff(win, A_REVERSE);
     }
 
-    /* --- error message --- */
     if (errmsg[0] != '\0') {
       wattron(win, COLOR_PAIR(COLOR_PAIR_ERROR) | A_BOLD);
       mvwprintw(win, ERR_ROW, LABEL_COL, "%-*s", BOX_W - LABEL_COL - 2, errmsg);
       wattroff(win, COLOR_PAIR(COLOR_PAIR_ERROR) | A_BOLD);
     }
 
-    /* --- cursor --- */
     if (active == 0) {
       int cx = ulen < field_w ? ulen : field_w - 1;
       wmove(win, UROW, FIELD_COL + cx);
@@ -352,7 +358,6 @@ credentials_result_t ui_screen_credentials(client_context *ctx,
 
     wnoutrefresh(win);
     doupdate();
-
     ch = wgetch(win);
 
     if (ch == '\t' || ch == KEY_DOWN || ch == KEY_UP) {
@@ -393,12 +398,10 @@ credentials_result_t ui_screen_credentials(client_context *ctx,
 
     } else if (ch >= ASCII_SPACE && ch < ASCII_DEL) {
       if (active == 0 && ulen < USERNAME_LENGTH - 1) {
-        uname[ulen] = (char)ch;
-        ulen++;
+        uname[ulen++] = (char)ch;
         uname[ulen] = '\0';
       } else if (active == 1 && plen < PASSWORD_LENGTH - 1) {
-        pword[plen] = (char)ch;
-        plen++;
+        pword[plen++] = (char)ch;
         pword[plen] = '\0';
       }
       errmsg[0] = '\0';
@@ -425,7 +428,7 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
   snprintf(title_right, sizeof(title_right), "User: %s", ctx->username);
   draw_title("BIG Chat  -  Channels", title_right);
   ui_set_status(
-      "Up/Down: navigate   Enter: join channel   Q: logout  D: delete account");
+      "Up/Down: navigate   Enter: join   Q: logout   D: delete account");
 
   list_h = LINES - 2;
   list_w = DEFAULT_LIST_WIDTH;
@@ -495,7 +498,6 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
 
     wnoutrefresh(win);
     doupdate();
-
     ch = wgetch(win);
 
     if (ch == KEY_UP) {
@@ -530,18 +532,15 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
       doupdate();
     } else if (ch == 'd' || ch == 'D') {
       int confirm = ui_confirm_delete_account();
-
       if (confirm) {
         channel_list_choice_t delete_result;
         delete_result.action = CHANNEL_LIST_DELETE;
         delete_result.channel_id = 0;
-
         delwin(win);
         clear();
         refresh();
         return delete_result;
       }
-
       touchwin(win);
       wnoutrefresh(win);
       doupdate();
@@ -550,7 +549,7 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
         break;
       }
     }
-  } /* end for(;;) */
+  }
 
   {
     channel_list_choice_t result;
@@ -568,25 +567,20 @@ channel_list_choice_t ui_screen_channel_list(client_context *ctx) {
 }
 
 int ui_confirm_delete_account(void) {
-
   WINDOW *confirm = make_box(CONFIRM_BOX_H, CONFIRM_BOX_W, "Delete Account");
-
   mvwprintw(confirm, 2, 3, "Are you sure you want to delete?");
   mvwprintw(confirm, 3, CONFIRM_BTN_COL, "[Y] Yes        [N] No");
-
   wnoutrefresh(confirm);
   doupdate();
 
   for (;;) {
     int ch = wgetch(confirm);
-
     if (ch == 'y' || ch == 'Y') {
       delwin(confirm);
       clear();
       refresh();
       return 1;
     }
-
     if (ch == 'n' || ch == 'N') {
       delwin(confirm);
       clear();
@@ -597,22 +591,39 @@ int ui_confirm_delete_account(void) {
 }
 
 /* =========================================================================
- * SCREEN: chat
+ * SCREEN: chat — helper callbacks
  * ====================================================================== */
 
 /*
- * Callback handed to network_receive_pending().
- * Pushes an incoming message into the local history ring buffer.
+ * Callback for network_receive_pending — live incoming messages.
+ * Timestamp is not known from this path; use 0.
  */
 static void on_incoming_message(const char *sender_name, const char *text,
-                                void *userdata) {
-  const client_context *ctx = (client_context *)userdata;
+                                const void *userdata) {
+  const client_context *ctx = (const client_context *)userdata;
   int is_mine = (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0);
-  history_push(sender_name, text, is_mine);
+  history_push(sender_name, text, is_mine, 0, 0);
 }
 
 /*
- * draw_history — redraws the message history inside msg_win.
+ * Callback for network_fetch_history — historical messages on join.
+ */
+static void on_history_message(const char *sender_name, const char *text,
+                               const void *userdata, uint64_t timestamp,
+                               uint8_t sender_id) {
+  const client_context *ctx = (const client_context *)userdata;
+  int is_mine = (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0);
+  history_push(sender_name, text, is_mine, timestamp, sender_id);
+}
+
+/* =========================================================================
+ * SCREEN: chat — draw_history
+ * ====================================================================== */
+
+/*
+ * Redraws the message history inside msg_win.
+ * When s_select_mode is non-zero, the line at s_selected_index is
+ * highlighted and own-message lines show an [E]dit/[D]elete hint.
  */
 static void draw_history(WINDOW *msg_win, int msg_h, int msg_w) {
   int visible;
@@ -646,14 +657,28 @@ static void draw_history(WINDOW *msg_win, int msg_h, int msg_w) {
 
   draw_row = 1;
   for (i = first; i < last; i++) {
-    int idx = i % HISTORY_MAX;
-    chat_line_t *line = &s_history[idx];
-    int text_w = msg_w - PREFIX_RESERVE; /* space for "[XXX]: " prefix */
+    chat_line_t *line = history_get(i);
+    if (!line) {
+      draw_row++;
+      continue;
+    }
+
+    int text_w = msg_w - PREFIX_RESERVE;
     if (text_w < 1) {
       text_w = 1;
     }
 
-    if (line->is_mine) {
+    int is_sel = (s_select_mode && i == s_selected_index);
+
+    if (is_sel) {
+      wattron(msg_win, A_REVERSE);
+    }
+
+    if (line->is_deleted) {
+      wattron(msg_win, COLOR_PAIR(COLOR_PAIR_ERROR));
+      mvwprintw(msg_win, draw_row, 1, "[deleted]%.*s", text_w, "");
+      wattroff(msg_win, COLOR_PAIR(COLOR_PAIR_ERROR));
+    } else if (line->is_mine) {
       wattron(msg_win, COLOR_PAIR(COLOR_PAIR_MINE) | A_BOLD);
       mvwprintw(msg_win, draw_row, 1, "[You]: ");
       wattroff(msg_win, A_BOLD);
@@ -661,16 +686,22 @@ static void draw_history(WINDOW *msg_win, int msg_h, int msg_w) {
       wattroff(msg_win, COLOR_PAIR(COLOR_PAIR_MINE));
     } else {
       wattron(msg_win, COLOR_PAIR(COLOR_PAIR_THEIRS) | A_BOLD);
-      mvwprintw(msg_win, draw_row, 1, "[%3s]: ", line->sender_name);
+      mvwprintw(msg_win, draw_row, 1, "[%.*s]: ", USERNAME_LENGTH - 1,
+                line->sender_name);
       wattroff(msg_win, A_BOLD);
       wattron(msg_win, COLOR_PAIR(COLOR_PAIR_THEIRS));
       wprintw(msg_win, "%.*s", text_w, line->text);
       wattroff(msg_win, COLOR_PAIR(COLOR_PAIR_THEIRS));
     }
+
+    if (is_sel) {
+      wattroff(msg_win, A_REVERSE);
+    }
+
     draw_row++;
   }
 
-  /* scroll hint */
+  /* Scroll hint */
   if (s_scroll_offset > 0) {
     wattron(msg_win, COLOR_PAIR(COLOR_PAIR_LABEL));
     mvwprintw(msg_win, msg_h - 1, 2, " +%d newer ", s_scroll_offset);
@@ -680,9 +711,10 @@ static void draw_history(WINDOW *msg_win, int msg_h, int msg_w) {
   wnoutrefresh(msg_win);
 }
 
-/*
- * chat_poll_socket — drains all pending inbound packets without blocking.
- */
+/* =========================================================================
+ * SCREEN: chat — socket poll
+ * ====================================================================== */
+
 static void chat_poll_socket(client_context *ctx) {
   int result;
   do {
@@ -690,14 +722,142 @@ static void chat_poll_socket(client_context *ctx) {
   } while (result > 0);
 }
 
-/*
- * ui_screen_chat — main chat loop.
- */
+/* =========================================================================
+ * SCREEN: chat — inline edit (called when user presses E in select mode)
+ *
+ * Opens the input box pre-filled with the selected message text, lets
+ * the user edit it, and on Enter calls network_edit_message().
+ * Returns 1 if the message was updated, 0 if the user cancelled.
+ * ====================================================================== */
+
+static int chat_edit_selected(client_context *ctx, WINDOW *inp_win, int msg_h) {
+  chat_line_t *line = history_get(s_selected_index);
+  if (!line || !line->is_mine || line->is_deleted || line->timestamp == 0) {
+    return 0;
+  }
+
+  (void)msg_h; /* reserved for future layout use */
+
+  /* Copy existing text into editing buffer */
+  char edit_buf[INPUT_MAX + 1];
+  memset(edit_buf, 0, sizeof(edit_buf));
+  strncpy(edit_buf, line->text, INPUT_MAX);
+  int edit_len = (int)strlen(edit_buf);
+  int inp_scroll = 0;
+
+  ui_set_status("Edit message. Enter: confirm   Esc: cancel");
+
+  for (;;) {
+    int field_w = COLS - 4;
+    if (field_w < 1) {
+      field_w = 1;
+    }
+
+    if (edit_len - inp_scroll >= field_w) {
+      inp_scroll = edit_len - field_w + 1;
+    }
+    if (inp_scroll < 0) {
+      inp_scroll = 0;
+    }
+
+    werase(inp_win);
+    wattron(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
+    box(inp_win, 0, 0);
+    wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
+    wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+    mvwprintw(inp_win, 0, 2, " Edit ");
+    wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+
+    wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+    mvwhline(inp_win, 1, 2, ' ', field_w);
+    mvwprintw(inp_win, 1, 2, "%.*s", field_w, edit_buf + inp_scroll);
+    wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+
+    int cur_col = 2 + (edit_len - inp_scroll);
+    if (cur_col > COLS - 3) {
+      cur_col = COLS - 3;
+    }
+    wmove(inp_win, 1, cur_col);
+
+    wnoutrefresh(inp_win);
+    doupdate();
+
+    /* Blocking getch for the edit dialog */
+    wtimeout(inp_win, -1);
+    int ch = wgetch(inp_win);
+    wtimeout(inp_win, POLL_TIMEOUT_MS);
+
+    if (ch == ASCII_ESC) {
+      return 0; /* cancelled */
+    }
+
+    if (ch == '\n' || ch == KEY_ENTER) {
+      if (edit_len == 0) {
+        return 0;
+      }
+      if (network_edit_message(ctx, line->timestamp, edit_buf) == 0) {
+        /* Update local history */
+        strncpy(line->text, edit_buf, INPUT_MAX);
+        line->text[INPUT_MAX] = '\0';
+        return 1;
+      }
+      return 0;
+    }
+
+    if (ch == KEY_BACKSPACE || ch == ASCII_DEL || ch == '\b') {
+      if (edit_len > 0) {
+        edit_buf[--edit_len] = '\0';
+      }
+    } else if (ch >= ASCII_SPACE && ch < ASCII_DEL && edit_len < INPUT_MAX) {
+      edit_buf[edit_len++] = (char)ch;
+      edit_buf[edit_len] = '\0';
+    }
+  }
+}
+
+/* =========================================================================
+ * SCREEN: chat — delete selected (called when user presses D in select mode)
+ * ====================================================================== */
+
+static void chat_delete_selected(client_context *ctx) {
+  chat_line_t *line = history_get(s_selected_index);
+  if (!line || !line->is_mine || line->is_deleted || line->timestamp == 0) {
+    return;
+  }
+
+  /* Confirm */
+  WINDOW *confirm =
+      make_box(CONFIRM_BOX_H, CONFIRM_BOX_W + 4, "Delete Message");
+  mvwprintw(confirm, 2, 3, "Delete this message?");
+  mvwprintw(confirm, 3, CONFIRM_BTN_COL, "[Y] Yes        [N] No");
+  wnoutrefresh(confirm);
+  doupdate();
+
+  wtimeout(confirm, -1);
+  int ans = wgetch(confirm);
+  delwin(confirm);
+  clear();
+  refresh();
+
+  if (ans != 'y' && ans != 'Y') {
+    return;
+  }
+
+  if (network_delete_message(ctx, line->timestamp) == 0) {
+    line->is_deleted = 1;
+    line->text[0] = '\0';
+  }
+}
+
+/* =========================================================================
+ * SCREEN: chat — main loop
+ * ====================================================================== */
+
 chat_exit_reason_t ui_screen_chat(client_context *ctx) {
   char title_right[TITLE_BUF_SIZE];
   char input[INPUT_MAX + 1];
   int input_len;
-  int inp_scroll; /* horizontal scroll offset in the input field */
+  int inp_scroll;
   int msg_h;
   int inp_y;
   WINDOW *msg_win;
@@ -705,16 +865,11 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
 
   snprintf(title_right, sizeof(title_right), "User: %s   Channel: %u",
            ctx->username, (unsigned int)ctx->current_channel_id);
-  draw_title("BIG Chat  -  Messaging", title_right);
-  ui_set_status("Enter: send   PgUp/PgDn: scroll   Esc: channels   Q: logout");
+  draw_title("BIG Chat  -  Messaging | Enter: send  PgUp/PgDn: scroll  Up: "
+             "select msg  Esc: channels",
+             title_right);
+  ui_set_status("Loading history...");
 
-  /*
-   * Layout (rows):
-   * 0            title bar
-   * 1..LINES-4   message history
-   * LINES-3      input box (border + text line + border = 3 rows)
-   * LINES-1      status bar
-   */
   msg_h = LINES - 4;
   if (msg_h < 3) {
     msg_h = 3;
@@ -724,72 +879,148 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
   msg_win = newwin(msg_h, COLS, 1, 0);
   inp_win = newwin(3, COLS, inp_y, 0);
   keypad(inp_win, TRUE);
-  wtimeout(inp_win, POLL_TIMEOUT_MS); /* non-blocking getch with timeout */
+  wtimeout(inp_win, POLL_TIMEOUT_MS);
 
   memset(input, 0, sizeof(input));
   input_len = 0;
   inp_scroll = 0;
   s_scroll_offset = 0;
+  s_select_mode = 0;
+  s_selected_index = 0;
   history_clear();
 
+  /* --- Load channel history before entering the event loop --- */
+  network_fetch_history(ctx, on_history_message, ctx, HISTORY_FETCH);
+
+  /* After loading history, scroll position is at the bottom (newest).
+     Offset shows most recent HISTORY_FETCH messages; leave scroll at 0. */
+
+  ui_set_status("Enter: send   Ctrl+U/Ctrl+D: scroll   Up: select msg   "
+                "Esc: channels");
+
   while (ctx->state == STATE_MESSAGING) {
-    int field_w;
-    int cur_col;
     int ch;
 
-    /* --- redraw history panel --- */
+    /* --- Redraw history panel --- */
     draw_history(msg_win, msg_h, COLS);
 
-    /* --- redraw input box --- */
+    /* --- Redraw input / mode indicator box --- */
     werase(inp_win);
     wattron(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
     box(inp_win, 0, 0);
     wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
 
-    wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
-    mvwprintw(inp_win, 0, 2, " Message ");
-    wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+    if (s_select_mode) {
+      /* In select mode, show mode label and hint */
+      wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+      mvwprintw(inp_win, 0, 2, " SELECT MODE ");
+      wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
 
-    field_w = COLS - 4;
-    if (field_w < 1) {
-      field_w = 1;
-    }
+      wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+      mvwprintw(inp_win, 1, 2,
+                "Up/Down: navigate   E: edit   D: delete   "
+                "Esc: back");
+      wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+    } else {
+      int field_w;
+      int cur_col;
 
-    /* keep cursor in view horizontally */
-    if (input_len - inp_scroll >= field_w) {
-      inp_scroll = input_len - field_w + 1;
-    }
-    if (inp_scroll < 0) {
-      inp_scroll = 0;
-    }
+      wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+      mvwprintw(inp_win, 0, 2, " Message ");
+      wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
 
-    wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
-    mvwhline(inp_win, 1, 2, ' ', field_w);
-    mvwprintw(inp_win, 1, 2, "%.*s", field_w, input + inp_scroll);
-    wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+      field_w = COLS - 4;
+      if (field_w < 1) {
+        field_w = 1;
+      }
 
-    cur_col = 2 + (input_len - inp_scroll);
-    if (cur_col > COLS - 3) {
-      cur_col = COLS - 3;
+      if (input_len - inp_scroll >= field_w) {
+        inp_scroll = input_len - field_w + 1;
+      }
+      if (inp_scroll < 0) {
+        inp_scroll = 0;
+      }
+
+      wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+      mvwhline(inp_win, 1, 2, ' ', field_w);
+      mvwprintw(inp_win, 1, 2, "%.*s", field_w, input + inp_scroll);
+      wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+
+      cur_col = 2 + (input_len - inp_scroll);
+      if (cur_col > COLS - 3) {
+        cur_col = COLS - 3;
+      }
+      wmove(inp_win, 1, cur_col);
     }
-    wmove(inp_win, 1, cur_col);
 
     wnoutrefresh(inp_win);
     doupdate();
 
-    /* --- keyboard input (returns ERR after POLL_TIMEOUT_MS) --- */
+    /* --- Keyboard input --- */
     ch = wgetch(inp_win);
 
     if (ch == ERR) {
-      /* timeout — poll the socket for incoming messages */
+      /* timeout — poll socket */
       chat_poll_socket(ctx);
       continue;
     }
 
-    if (ch == ASCII_ESC) { /* ESC — leave channel */
+    /* ---- SELECT MODE keys ---- */
+    if (s_select_mode) {
+      int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+
+      if (ch == ASCII_ESC) {
+        s_select_mode = 0;
+        ui_set_status("Enter: send   PgUp/PgDn: scroll   "
+                      "Up: select msg   Esc: channels");
+
+      } else if (ch == KEY_UP) {
+        if (s_selected_index > 0) {
+          s_selected_index--;
+          /* Keep selected line visible */
+          int visible = msg_h - 2;
+          int first = total - visible - s_scroll_offset;
+          if (s_selected_index < first) {
+            s_scroll_offset++;
+          }
+        }
+      } else if (ch == KEY_DOWN) {
+        if (s_selected_index < total - 1) {
+          s_selected_index++;
+          int visible = msg_h - 2;
+          int first = total - visible - s_scroll_offset;
+          if (s_selected_index >= first + visible) {
+            if (s_scroll_offset > 0) {
+              s_scroll_offset--;
+            }
+          }
+        }
+      } else if (ch == 'e' || ch == 'E') {
+        /* Edit — only own messages */
+        const chat_line_t *sel = history_get(s_selected_index);
+        if (sel && sel->is_mine && !sel->is_deleted && sel->timestamp != 0) {
+          chat_edit_selected(ctx, inp_win, msg_h);
+          s_select_mode = 0;
+          ui_set_status("Enter: send   PgUp/PgDn: scroll   "
+                        "Up: select msg   Esc: channels");
+        }
+      } else if (ch == 'd' || ch == 'D') {
+        /* Delete — only own messages */
+        const chat_line_t *sel = history_get(s_selected_index);
+        if (sel && sel->is_mine && !sel->is_deleted && sel->timestamp != 0) {
+          chat_delete_selected(ctx);
+          s_select_mode = 0;
+          ui_set_status("Enter: send   Ctrl+u/Ctrl+d: scroll   "
+                        "Up: select msg   Esc: channels");
+        }
+      }
+      continue;
+    }
+
+    /* ---- NORMAL MODE keys ---- */
+
+    if (ch == ASCII_ESC) {
       ctx->state = STATE_LOGGED_IN;
-      // close(ctx->active_sock_fd);
-      // ctx->active_sock_fd = -1;
       delwin(msg_win);
       delwin(inp_win);
       clear();
@@ -797,7 +1028,21 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
       return CHAT_EXIT_CHANNEL_LIST;
     }
 
-    if (ch == KEY_PPAGE) { /* Page Up — scroll history up */
+    if (ch == KEY_UP) {
+      /* Enter select mode, starting at the most-recent message */
+      int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+      if (total > 0) {
+        s_select_mode = 1;
+        s_selected_index = total - 1; /* newest */
+        s_scroll_offset = 0;
+        ui_set_status("SELECT: Up/Down: navigate   E: edit   "
+                      "D: delete   Esc: back");
+      }
+      continue;
+    }
+
+    if (ch == KEY_PPAGE ||
+        ch == ASCII_CTRL_AND_U) { /* 21 is ASCII for Ctrl+U */
       int max_scroll = s_history_total - (msg_h - 2);
       if (max_scroll < 0) {
         max_scroll = 0;
@@ -809,7 +1054,7 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
       continue;
     }
 
-    if (ch == KEY_NPAGE) { /* Page Down — scroll history down */
+    if (ch == KEY_NPAGE || ch == 4) { /* 4 is ASCII for Ctrl+D */
       s_scroll_offset -= (msg_h - 2);
       if (s_scroll_offset < 0) {
         s_scroll_offset = 0;
@@ -827,33 +1072,31 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
         break;
       }
 
-      network_send_message(ctx, input);
-      // history_push(ctx->username, input, 1);
+      uint64_t ts = network_send_message(ctx, input);
+      /* Optimistically add to local history with timestamp */
+      history_push(ctx->username, input, 1, ts, ctx->account_id);
 
       memset(input, 0, sizeof(input));
       input_len = 0;
       inp_scroll = 0;
 
-      /* drain anything that arrived while we were composing */
+      s_scroll_offset = 0; /* snap to bottom */
       chat_poll_socket(ctx);
       continue;
     }
 
     if (ch == KEY_BACKSPACE || ch == ASCII_DEL || ch == '\b') {
       if (input_len > 0) {
-        input_len--;
-        input[input_len] = '\0';
+        input[--input_len] = '\0';
       }
       continue;
     }
 
     if (ch >= ASCII_SPACE && ch < ASCII_DEL && input_len < INPUT_MAX) {
-      input[input_len] = (char)ch;
-      input_len++;
+      input[input_len++] = (char)ch;
       input[input_len] = '\0';
     }
 
-    /* poll after every keypress so inbound messages don't lag */
     chat_poll_socket(ctx);
   }
 

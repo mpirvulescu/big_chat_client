@@ -65,7 +65,7 @@ void network_execute_messaging_loop(client_context *ctx) {
   // network_send_message() and network_receive_pending().
 }
 
-void network_send_message(client_context *ctx, const char *text) {
+uint64_t network_send_message(client_context *ctx, const char *text) {
   uint16_t msg_len = (uint16_t)strlen(text);
   size_t body_size = sizeof(big_send_message_t) + msg_len;
   size_t total_size = sizeof(big_header_t) + body_size;
@@ -104,12 +104,13 @@ void network_send_message(client_context *ctx, const char *text) {
     fatal_error(ctx);
   }
   free(buf);
+  return ms_ts;
 }
 
 int network_receive_pending(client_context *ctx,
                             void (*on_message)(const char *sender_id,
                                                const char *text,
-                                               void *userdata),
+                                               const void *userdata),
                             void *userdata) {
   // Non-blocking peek — return immediately if nothing is ready
   struct pollfd pfd = {.fd = ctx->active_sock_fd, .events = POLLIN};
@@ -355,7 +356,8 @@ cleanup:
 
 void network_fetch_history(client_context *ctx,
                            void (*on_message)(const char *sender_name,
-                                              const char *text, void *userdata,
+                                              const char *text,
+                                              const void *userdata,
                                               uint64_t timestamp,
                                               uint8_t sender_id),
                            void *userdata, uint16_t limit) {
