@@ -63,6 +63,8 @@ struct client_context
     uint8_t channel_ids[MAX_CHANNEL_COUNT];
     uint8_t channel_count;
     uint8_t current_channel_id;
+    uint8_t channel_users[MAX_SENDER_ID];
+    uint16_t channel_user_count;
 
     int in_messaging_loop;
 

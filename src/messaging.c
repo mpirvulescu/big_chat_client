@@ -128,6 +128,31 @@ int network_receive_pending(client_context *ctx,
 
   uint32_t body_size = ntohl(header.body);
 
+  if (header.type == 0x3B) {
+    if (body_size < sizeof(uint16_t)) {
+        discard_body(ctx, body_size);
+        return 0;
+    }
+
+    uint16_t count_be;
+    recv(ctx->active_sock_fd, &count_be, sizeof(count_be), MSG_WAITALL);
+    ctx->channel_user_count = ntohs(count_be);
+
+    // Limit to our array size
+    uint16_t to_read = ctx->channel_user_count;
+    if (to_read > MAX_CHANNEL_USERS) to_read = MAX_CHANNEL_USERS;
+
+    // Read the IDs (assuming 1 byte per user ID)
+    recv(ctx->active_sock_fd, ctx->channel_users, to_read, MSG_WAITALL);
+
+    // Drain any remaining bytes if the server sent more than we can hold
+    if (body_size > (sizeof(uint16_t) + to_read)) {
+        discard_body(ctx, body_size - (sizeof(uint16_t) + to_read));
+    }
+
+    return 1; // Return 1 so the UI loop knows it needs to redraw!
+  }
+
   if (header.type == TYPE_SEND_MESSAGE_RESPONSE) {
     /* The server sends back the official timestamp in the body (8 bytes) */
     if (body_size >= (uint32_t)sizeof(uint64_t)) {

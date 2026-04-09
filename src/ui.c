@@ -44,7 +44,9 @@ enum {
   ASCII_CTRL_AND_U = 21
 };
 
-enum { CONFIRM_BOX_H = 5, CONFIRM_BOX_W = 36, CONFIRM_BTN_COL = 10 };
+enum { CONFIRM_BOX_H = 5, CONFIRM_BOX_W = 36, CONFIRM_BTN_COL = 10, SIDEBAR_WIDTH = 20,
+  MIN_MSG_WIDTH = 20,
+  USER_LIST_H_OFFSET = 2};
 
 /* -------------------------------------------------------------------------
  * Chat-history ring buffer
@@ -862,9 +864,306 @@ static void chat_delete_selected(client_context *ctx) {
   }
 }
 
+static void draw_user_list(WINDOW *win, client_context *ctx, int h, int w) {
+  int i;
+  int max_visible = h - USER_LIST_H_OFFSET;
+
+  werase(win);
+  wattron(win, COLOR_PAIR(COLOR_PAIR_BORDER));
+  box(win, 0, 0);
+  wattroff(win, COLOR_PAIR(COLOR_PAIR_BORDER));
+
+  wattron(win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+  mvwprintw(win, 0, 2, " Online (%u) ", (unsigned int)ctx->channel_user_count);
+  wattroff(win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+
+  for (i = 0; i < ctx->channel_user_count && i < max_visible; i++) {
+    char name[USERNAME_LENGTH];
+    uint8_t sid = ctx->channel_users[i];
+
+    /* Resolve name using your 256-slot cache */
+    lookup_username(ctx, sid, name, sizeof(name));
+    
+    if (name[0] == '\0') {
+        snprintf(name, sizeof(name), "[%u]", (unsigned int)sid);
+    }
+
+    if (sid == ctx->account_id) {
+        wattron(win, COLOR_PAIR(COLOR_PAIR_MINE) | A_BOLD);
+        mvwprintw(win, i + 1, 1, "> %-16s", ctx->username);
+        wattroff(win, COLOR_PAIR(COLOR_PAIR_MINE) | A_BOLD);
+    } else {
+        wattron(win, COLOR_PAIR(COLOR_PAIR_THEIRS));
+        mvwprintw(win, i + 1, 1, "  %-16s", name);
+        wattroff(win, COLOR_PAIR(COLOR_PAIR_THEIRS));
+    }
+  }
+  wnoutrefresh(win);
+}
+
 /* =========================================================================
  * SCREEN: chat — main loop
  * ====================================================================== */
+
+// chat_exit_reason_t ui_screen_chat(client_context *ctx) {
+//   char title_right[TITLE_BUF_SIZE];
+//   char input[INPUT_MAX + 1];
+//   int input_len;
+//   int inp_scroll;
+//   int msg_h;
+//   int inp_y;
+//   WINDOW *msg_win;
+//   WINDOW *inp_win;
+
+
+//   snprintf(title_right, sizeof(title_right), "User: %s   Channel: %u",
+//            ctx->username, (unsigned int)ctx->current_channel_id);
+//   draw_title("BIG Chat  -  Messaging | Enter: send  PgUp/PgDn: scroll  Up: "
+//              "select msg  Esc: channels",
+//              title_right);
+//   ui_set_status("Loading history...");
+
+//   msg_h = LINES - 4;
+//   if (msg_h < 3) {
+//     msg_h = 3;
+//   }
+//   inp_y = LINES - 3;
+
+//   msg_win = newwin(msg_h, COLS, 1, 0);
+//   inp_win = newwin(3, COLS, inp_y, 0);
+//   keypad(inp_win, TRUE);
+//   wtimeout(inp_win, POLL_TIMEOUT_MS);
+
+//   memset(input, 0, sizeof(input));
+//   input_len = 0;
+//   inp_scroll = 0;
+//   s_scroll_offset = 0;
+//   s_select_mode = 0;
+//   s_selected_index = 0;
+//   history_clear();
+
+//   /* --- Load channel history before entering the event loop --- */
+//   network_fetch_history(ctx, on_history_message, ctx, HISTORY_FETCH);
+
+//   /* After loading history, scroll position is at the bottom (newest).
+//      Offset shows most recent HISTORY_FETCH messages; leave scroll at 0. */
+
+//   ui_set_status("Enter: send   Ctrl+U/Ctrl+D: scroll   Up: select msg   "
+//                 "Esc: channels");
+
+//   while (ctx->state == STATE_MESSAGING) {
+//     int ch;
+
+//     /* --- Redraw history panel --- */
+//     draw_history(msg_win, msg_h, COLS);
+
+//     /* --- Redraw input / mode indicator box --- */
+//     werase(inp_win);
+//     wattron(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
+//     box(inp_win, 0, 0);
+//     wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
+
+//     if (s_select_mode) {
+//       /* In select mode, show mode label and hint */
+//       wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+//       mvwprintw(inp_win, 0, 2, " SELECT MODE ");
+//       wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+
+//       wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+//       mvwprintw(inp_win, 1, 2,
+//                 "Up/Down: navigate   E: edit   D: delete   "
+//                 "Esc: back");
+//       wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+//     } else {
+//       int field_w;
+//       int cur_col;
+
+//       wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+//       mvwprintw(inp_win, 0, 2, " Message ");
+//       wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
+
+//       field_w = COLS - 4;
+//       if (field_w < 1) {
+//         field_w = 1;
+//       }
+
+//       if (input_len - inp_scroll >= field_w) {
+//         inp_scroll = input_len - field_w + 1;
+//       }
+//       if (inp_scroll < 0) {
+//         inp_scroll = 0;
+//       }
+
+//       wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+//       mvwhline(inp_win, 1, 2, ' ', field_w);
+//       mvwprintw(inp_win, 1, 2, "%.*s", field_w, input + inp_scroll);
+//       wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL));
+
+//       cur_col = 2 + (input_len - inp_scroll);
+//       if (cur_col > COLS - 3) {
+//         cur_col = COLS - 3;
+//       }
+//       wmove(inp_win, 1, cur_col);
+//     }
+
+//     wnoutrefresh(inp_win);
+//     doupdate();
+
+//     /* --- Keyboard input --- */
+//     ch = wgetch(inp_win);
+
+//     if (ch == ERR) {
+//       /* timeout — poll socket */
+//       chat_poll_socket(ctx);
+//       continue;
+//     }
+
+//     /* ---- SELECT MODE keys ---- */
+//     if (s_select_mode) {
+//       int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+
+//       if (ch == ASCII_ESC) {
+//         s_select_mode = 0;
+//         ui_set_status("Enter: send   PgUp/PgDn: scroll   "
+//                       "Up: select msg   Esc: channels");
+
+//       } else if (ch == KEY_UP) {
+//         if (s_selected_index > 0) {
+//           s_selected_index--;
+//           /* Keep selected line visible */
+//           int visible = msg_h - 2;
+//           int first = total - visible - s_scroll_offset;
+//           if (s_selected_index < first) {
+//             s_scroll_offset++;
+//           }
+//         }
+//       } else if (ch == KEY_DOWN) {
+//         if (s_selected_index < total - 1) {
+//           s_selected_index++;
+//           int visible = msg_h - 2;
+//           int first = total - visible - s_scroll_offset;
+//           if (s_selected_index >= first + visible) {
+//             if (s_scroll_offset > 0) {
+//               s_scroll_offset--;
+//             }
+//           }
+//         }
+//       } else if (ch == 'e' || ch == 'E') {
+//         /* Edit — only own messages */
+//         const chat_line_t *sel = history_get(s_selected_index);
+//         if (sel && sel->is_mine && !sel->is_deleted && sel->timestamp != 0) {
+//           chat_edit_selected(ctx, inp_win, msg_h);
+//           s_select_mode = 0;
+//           ui_set_status("Enter: send   PgUp/PgDn: scroll   "
+//                         "Up: select msg   Esc: channels");
+//         }
+//       } else if (ch == 'd' || ch == 'D') {
+//         /* Delete — only own messages */
+//         const chat_line_t *sel = history_get(s_selected_index);
+//         if (sel && sel->is_mine && !sel->is_deleted && sel->timestamp != 0) {
+//           chat_delete_selected(ctx);
+//           s_select_mode = 0;
+//           ui_set_status("Enter: send   Ctrl+u/Ctrl+d: scroll   "
+//                         "Up: select msg   Esc: channels");
+//         }
+//       }
+//       continue;
+//     }
+
+//     /* ---- NORMAL MODE keys ---- */
+
+//     if (ch == ASCII_ESC) {
+//       ctx->state = STATE_LOGGED_IN;
+//       delwin(msg_win);
+//       delwin(inp_win);
+//       clear();
+//       refresh();
+//       return CHAT_EXIT_CHANNEL_LIST;
+//     }
+
+//     if (ch == KEY_UP) {
+//       /* Enter select mode, starting at the most-recent message */
+//       int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+//       if (total > 0) {
+//         s_select_mode = 1;
+//         s_selected_index = total - 1; /* newest */
+//         s_scroll_offset = 0;
+//         ui_set_status("SELECT: Up/Down: navigate   E: edit   "
+//                       "D: delete   Esc: back");
+//       }
+//       continue;
+//     }
+
+//     if (ch == KEY_PPAGE ||
+//         ch == ASCII_CTRL_AND_U) { /* 21 is ASCII for Ctrl+U */
+//       int max_scroll = s_history_total - (msg_h - 2);
+//       if (max_scroll < 0) {
+//         max_scroll = 0;
+//       }
+//       s_scroll_offset += (msg_h - 2);
+//       if (s_scroll_offset > max_scroll) {
+//         s_scroll_offset = max_scroll;
+//       }
+//       continue;
+//     }
+
+//     if (ch == KEY_NPAGE || ch == 4) { /* 4 is ASCII for Ctrl+D */
+//       s_scroll_offset -= (msg_h - 2);
+//       if (s_scroll_offset < 0) {
+//         s_scroll_offset = 0;
+//       }
+//       continue;
+//     }
+
+//     if (ch == '\n' || ch == KEY_ENTER) {
+//       if (input_len == 0) {
+//         continue;
+//       }
+
+//       if (strcmp(input, "/quit") == 0) {
+//         ctx->state = STATE_LOGGED_IN;
+//         break;
+//       }
+
+//       // network_send_message(ctx, input);
+
+//       uint64_t ts = network_send_message(ctx, input);
+//       /* Optimistically add to local history with timestamp */
+//       history_push(ctx->username, input, 1, ts, ctx->account_id);
+
+//       memset(input, 0, sizeof(input));
+//       input_len = 0;
+//       inp_scroll = 0;
+
+//       s_scroll_offset = 0; /* snap to bottom */
+//       chat_poll_socket(ctx);
+//       continue;
+//     }
+
+//     if (ch == KEY_BACKSPACE || ch == ASCII_DEL || ch == '\b') {
+//       if (input_len > 0) {
+//         input[--input_len] = '\0';
+//       }
+//       continue;
+//     }
+
+//     if (ch >= ASCII_SPACE && ch < ASCII_DEL && input_len < INPUT_MAX) {
+//       input[input_len++] = (char)ch;
+//       input[input_len] = '\0';
+//     }
+
+//     chat_poll_socket(ctx);
+//   }
+
+//   close(ctx->active_sock_fd);
+//   ctx->active_sock_fd = -1;
+
+//   delwin(msg_win);
+//   delwin(inp_win);
+//   clear();
+//   refresh();
+//   return CHAT_EXIT_LOGOUT;
+// }
 
 chat_exit_reason_t ui_screen_chat(client_context *ctx) {
   char title_right[TITLE_BUF_SIZE];
@@ -872,10 +1171,13 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
   int input_len;
   int inp_scroll;
   int msg_h;
+  int msg_w;
   int inp_y;
   WINDOW *msg_win;
   WINDOW *inp_win;
+  WINDOW *user_win; /* Sidebar for 0x3B User List */
 
+  /* Set up the title bar */
   snprintf(title_right, sizeof(title_right), "User: %s   Channel: %u",
            ctx->username, (unsigned int)ctx->current_channel_id);
   draw_title("BIG Chat  -  Messaging | Enter: send  PgUp/PgDn: scroll  Up: "
@@ -883,17 +1185,28 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
              title_right);
   ui_set_status("Loading history...");
 
+  /* Height calculations */
   msg_h = LINES - 4;
   if (msg_h < 3) {
     msg_h = 3;
   }
   inp_y = LINES - 3;
 
-  msg_win = newwin(msg_h, COLS, 1, 0);
+  /* Width calculations - Dynamic splitting for sidebar */
+  msg_w = COLS - SIDEBAR_WIDTH;
+  if (msg_w < MIN_MSG_WIDTH) {
+    msg_w = COLS; /* Fallback: screen too narrow, hide sidebar */
+  }
+
+  /* Create windows using calculated dimensions */
+  msg_win = newwin(msg_h, msg_w, 1, 0);
+  user_win = newwin(msg_h, SIDEBAR_WIDTH, 1, msg_w);
   inp_win = newwin(3, COLS, inp_y, 0);
+
   keypad(inp_win, TRUE);
   wtimeout(inp_win, POLL_TIMEOUT_MS);
 
+  /* State initialization */
   memset(input, 0, sizeof(input));
   input_len = 0;
   inp_scroll = 0;
@@ -905,26 +1218,25 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
   /* --- Load channel history before entering the event loop --- */
   network_fetch_history(ctx, on_history_message, ctx, HISTORY_FETCH);
 
-  /* After loading history, scroll position is at the bottom (newest).
-     Offset shows most recent HISTORY_FETCH messages; leave scroll at 0. */
-
   ui_set_status("Enter: send   Ctrl+U/Ctrl+D: scroll   Up: select msg   "
                 "Esc: channels");
 
   while (ctx->state == STATE_MESSAGING) {
     int ch;
 
-    /* --- Redraw history panel --- */
-    draw_history(msg_win, msg_h, COLS);
+    /* 1. Redraw message history using the dynamic width */
+    draw_history(msg_win, msg_h, msg_w);
 
-    /* --- Redraw input / mode indicator box --- */
+    /* 2. Redraw the sidebar (0x3B Data) */
+    draw_user_list(user_win, ctx, msg_h, SIDEBAR_WIDTH);
+
+    /* 3. Redraw input / mode indicator box */
     werase(inp_win);
     wattron(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
     box(inp_win, 0, 0);
     wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_BORDER));
 
     if (s_select_mode) {
-      /* In select mode, show mode label and hint */
       wattron(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
       mvwprintw(inp_win, 0, 2, " SELECT MODE ");
       wattroff(inp_win, COLOR_PAIR(COLOR_PAIR_LABEL) | A_BOLD);
@@ -966,6 +1278,8 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
       wmove(inp_win, 1, cur_col);
     }
 
+    wnoutrefresh(msg_win);
+    wnoutrefresh(user_win);
     wnoutrefresh(inp_win);
     doupdate();
 
@@ -973,7 +1287,7 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
     ch = wgetch(inp_win);
 
     if (ch == ERR) {
-      /* timeout — poll socket */
+      /* timeout — poll socket for broadcasts (0x33, 0x3B, etc) */
       chat_poll_socket(ctx);
       continue;
     }
@@ -990,7 +1304,6 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
       } else if (ch == KEY_UP) {
         if (s_selected_index > 0) {
           s_selected_index--;
-          /* Keep selected line visible */
           int visible = msg_h - 2;
           int first = total - visible - s_scroll_offset;
           if (s_selected_index < first) {
@@ -1009,7 +1322,6 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
           }
         }
       } else if (ch == 'e' || ch == 'E') {
-        /* Edit — only own messages */
         const chat_line_t *sel = history_get(s_selected_index);
         if (sel && sel->is_mine && !sel->is_deleted && sel->timestamp != 0) {
           chat_edit_selected(ctx, inp_win, msg_h);
@@ -1018,7 +1330,6 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
                         "Up: select msg   Esc: channels");
         }
       } else if (ch == 'd' || ch == 'D') {
-        /* Delete — only own messages */
         const chat_line_t *sel = history_get(s_selected_index);
         if (sel && sel->is_mine && !sel->is_deleted && sel->timestamp != 0) {
           chat_delete_selected(ctx);
@@ -1031,22 +1342,16 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
     }
 
     /* ---- NORMAL MODE keys ---- */
-
     if (ch == ASCII_ESC) {
       ctx->state = STATE_LOGGED_IN;
-      delwin(msg_win);
-      delwin(inp_win);
-      clear();
-      refresh();
-      return CHAT_EXIT_CHANNEL_LIST;
+      break;
     }
 
     if (ch == KEY_UP) {
-      /* Enter select mode, starting at the most-recent message */
       int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
       if (total > 0) {
         s_select_mode = 1;
-        s_selected_index = total - 1; /* newest */
+        s_selected_index = total - 1;
         s_scroll_offset = 0;
         ui_set_status("SELECT: Up/Down: navigate   E: edit   "
                       "D: delete   Esc: back");
@@ -1054,8 +1359,7 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
       continue;
     }
 
-    if (ch == KEY_PPAGE ||
-        ch == ASCII_CTRL_AND_U) { /* 21 is ASCII for Ctrl+U */
+    if (ch == KEY_PPAGE || ch == ASCII_CTRL_AND_U) {
       int max_scroll = s_history_total - (msg_h - 2);
       if (max_scroll < 0) {
         max_scroll = 0;
@@ -1067,7 +1371,7 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
       continue;
     }
 
-    if (ch == KEY_NPAGE || ch == 4) { /* 4 is ASCII for Ctrl+D */
+    if (ch == KEY_NPAGE || ch == 4) {
       s_scroll_offset -= (msg_h - 2);
       if (s_scroll_offset < 0) {
         s_scroll_offset = 0;
@@ -1085,17 +1389,14 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
         break;
       }
 
-      // network_send_message(ctx, input);
-
+      /* Hybrid UI: Draw locally AND send to server */
       uint64_t ts = network_send_message(ctx, input);
-      /* Optimistically add to local history with timestamp */
       history_push(ctx->username, input, 1, ts, ctx->account_id);
 
       memset(input, 0, sizeof(input));
       input_len = 0;
       inp_scroll = 0;
-
-      s_scroll_offset = 0; /* snap to bottom */
+      s_scroll_offset = 0;
       chat_poll_socket(ctx);
       continue;
     }
@@ -1115,12 +1416,19 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
     chat_poll_socket(ctx);
   }
 
-  close(ctx->active_sock_fd);
-  ctx->active_sock_fd = -1;
-
+  /* Cleanup all windows */
   delwin(msg_win);
+  delwin(user_win);
   delwin(inp_win);
+  
   clear();
   refresh();
-  return CHAT_EXIT_LOGOUT;
+  
+  if (ctx->state != STATE_LOGGED_IN) {
+    close(ctx->active_sock_fd);
+    ctx->active_sock_fd = -1;
+    return CHAT_EXIT_LOGOUT;
+  }
+  
+  return CHAT_EXIT_CHANNEL_LIST;
 }
