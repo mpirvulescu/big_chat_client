@@ -19,7 +19,8 @@ enum
     USERNAME_LENGTH = 16,
     PASSWORD_LENGTH = 16,
     CHANNEL_NAME_LENGTH = 16,
-    MAX_CHANNEL_COUNT = 255
+    MAX_CHANNEL_COUNT = 255,
+    MAX_SENDER_ID = 256
 };
 
 typedef enum 
@@ -51,8 +52,8 @@ struct client_context
 
     // user credentials
     char username[USERNAME_LENGTH];
-    char username_cache[USERNAME_LENGTH][USERNAME_LENGTH];
-    int username_cached[USERNAME_LENGTH];
+    char username_cache[MAX_SENDER_ID][USERNAME_LENGTH];
+    int username_cached[MAX_SENDER_ID];
     char password[PASSWORD_LENGTH];
     uint8_t account_id;
 

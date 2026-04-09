@@ -129,8 +129,27 @@ int network_receive_pending(client_context *ctx,
   uint32_t body_size = ntohl(header.body);
 
   if (header.type == TYPE_SEND_MESSAGE_RESPONSE) {
-    discard_body(ctx, body_size);
-    return 0; // ACK, nothing to show
+    /* The server sends back the official timestamp in the body (8 bytes) */
+    if (body_size >= (uint32_t)sizeof(uint64_t)) {
+      uint64_t official_ts_be;
+
+      if (recv(ctx->active_sock_fd, &official_ts_be, sizeof(official_ts_be),
+               MSG_WAITALL) != (ssize_t)sizeof(official_ts_be)) {
+        return -1;
+      }
+
+      /* Drain any extra padding the server might have accidentally included */
+      if (body_size > (uint32_t)sizeof(official_ts_be)) {
+        discard_body(ctx, body_size - (uint32_t)sizeof(official_ts_be));
+      }
+
+      /* Update the UI with the host-byte-order timestamp */
+      extern void ui_update_last_message_timestamp(uint64_t ts);
+      ui_update_last_message_timestamp(be64toh(official_ts_be));
+    } else {
+      discard_body(ctx, body_size);
+    }
+    return 0;
   }
 
   if (header.type == TYPE_EDIT_MESSAGE_RESPONSE ||
@@ -162,17 +181,22 @@ int network_receive_pending(client_context *ctx,
       return 0;
     }
 
-    // if (msg->sender_id == ctx->account_id) {
-    //   free(msg);
-    //   return 0;
-    // }
+    if (msg->sender_id == ctx->account_id && ctx->account_id != 0) {
+      free(msg);
+      return 0;
+    }
 
     char sender_name[USERNAME_LENGTH + 1];
     memset(sender_name, 0, sizeof(sender_name));
-    lookup_username(ctx, msg->sender_id, sender_name, sizeof(sender_name));
-    if (sender_name[0] == '\0') {
-      snprintf(sender_name, sizeof(sender_name), "[%u]",
-               (unsigned int)msg->sender_id);
+
+    if (msg->sender_id == ctx->account_id) {
+      strncpy(sender_name, ctx->username, USERNAME_LENGTH);
+    } else {
+      lookup_username(ctx, msg->sender_id, sender_name, sizeof(sender_name));
+      if (sender_name[0] == '\0') {
+        snprintf(sender_name, sizeof(sender_name), "[%u]",
+                 (unsigned int)msg->sender_id);
+      }
     }
 
     uint16_t msg_len = ntohs(msg->message_length);
@@ -538,9 +562,14 @@ void network_fetch_history(client_context *ctx,
     /* Resolve sender name */
     char sender_name[USERNAME_LENGTH + 1];
     memset(sender_name, 0, sizeof(sender_name));
-    lookup_username(ctx, sid, sender_name, sizeof(sender_name));
-    if (sender_name[0] == '\0') {
-      snprintf(sender_name, sizeof(sender_name), "[%u]", (unsigned int)sid);
+
+    if (sid == ctx->account_id) {
+      strncpy(sender_name, ctx->username, USERNAME_LENGTH);
+    } else {
+      lookup_username(ctx, sid, sender_name, sizeof(sender_name));
+      if (sender_name[0] == '\0') {
+        snprintf(sender_name, sizeof(sender_name), "[%u]", (unsigned int)sid);
+      }
     }
 
     if (on_message) {

@@ -144,6 +144,19 @@ static chat_line_t *history_get(int i) {
   return &s_history[idx];
 }
 
+void ui_update_last_message_timestamp(uint64_t official_ts) {
+  int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+  if (total > 0) {
+    // Grab the absolute newest message in the ring buffer
+    chat_line_t *last = history_get(total - 1);
+
+    // Safety check: Only update it if it's actually yours
+    if (last != NULL && last->is_mine) {
+      last->timestamp = official_ts;
+    }
+  }
+}
+
 /* -------------------------------------------------------------------------
  * ui_init / ui_teardown
  * ---------------------------------------------------------------------- */
@@ -1071,6 +1084,8 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
         ctx->state = STATE_LOGGED_IN;
         break;
       }
+
+      // network_send_message(ctx, input);
 
       uint64_t ts = network_send_message(ctx, input);
       /* Optimistically add to local history with timestamp */
