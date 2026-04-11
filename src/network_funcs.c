@@ -511,7 +511,7 @@ channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
   }
 
   // Still on the same socket — just join directly
-  // network_execute_channel_join(ctx, choice.channel_id);
+  network_execute_channel_join(ctx, choice.channel_id);
   // fprintf(stderr, "DEBUG: sock_fd after channel join: %d\n",
   // ctx->active_sock_fd);
 

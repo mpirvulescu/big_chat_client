@@ -176,8 +176,8 @@ void network_execute_channel_join(client_context *ctx, uint8_t channel_id) {
     fatal_error(ctx);
   }
 
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
+  // socket_create(ctx);
+  // socket_connect(ctx, ctx->manager_port);
 
   send_channel_join_request(ctx, channel_id);
   recv_channel_join_response(ctx);

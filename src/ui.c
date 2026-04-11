@@ -44,9 +44,14 @@ enum {
   ASCII_CTRL_AND_U = 21
 };
 
-enum { CONFIRM_BOX_H = 5, CONFIRM_BOX_W = 36, CONFIRM_BTN_COL = 10, SIDEBAR_WIDTH = 20,
+enum {
+  CONFIRM_BOX_H = 5,
+  CONFIRM_BOX_W = 36,
+  CONFIRM_BTN_COL = 10,
+  SIDEBAR_WIDTH = 20,
   MIN_MSG_WIDTH = 20,
-  USER_LIST_H_OFFSET = 2};
+  USER_LIST_H_OFFSET = 2
+};
 
 /* -------------------------------------------------------------------------
  * Chat-history ring buffer
@@ -85,7 +90,8 @@ static void draw_title(const char *left, const char *right);
 static WINDOW *make_box(int height, int width, const char *title);
 static void draw_history(WINDOW *msg_win, int msg_h, int msg_w);
 static void on_incoming_message(const char *sender_name, const char *text,
-                                const void *userdata);
+                                const void *userdata, uint64_t timestamp,
+                                uint8_t sender_id);
 static void on_history_message(const char *sender_name, const char *text,
                                const void *userdata, uint64_t timestamp,
                                uint8_t sender_id);
@@ -146,15 +152,19 @@ static chat_line_t *history_get(int i) {
   return &s_history[idx];
 }
 
-void ui_update_last_message_timestamp(uint64_t official_ts) {
+void ui_update_last_message_timestamp(uint64_t provisional_ts,
+                                      uint64_t official_ts) {
   int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
-  if (total > 0) {
-    // Grab the absolute newest message in the ring buffer
-    chat_line_t *last = history_get(total - 1);
+  int i;
 
-    // Safety check: Only update it if it's actually yours
-    if (last != NULL && last->is_mine) {
-      last->timestamp = official_ts;
+  (void)provisional_ts; /* reserved for future use */
+
+  /* Walk backwards: find the newest is_mine entry and patch it */
+  for (i = total - 1; i >= 0; i--) {
+    chat_line_t *entry = history_get(i);
+    if (entry && entry->is_mine && !entry->is_deleted) {
+      entry->timestamp = official_ts;
+      return;
     }
   }
 }
@@ -614,10 +624,13 @@ int ui_confirm_delete_account(void) {
  * Timestamp is not known from this path; use 0.
  */
 static void on_incoming_message(const char *sender_name, const char *text,
-                                const void *userdata) {
+                                const void *userdata, uint64_t timestamp,
+                                uint8_t sender_id) {
   const client_context *ctx = (const client_context *)userdata;
   int is_mine = (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0);
-  history_push(sender_name, text, is_mine, 0, 0);
+
+  /* Save the OFFICIAL timestamp immediately */
+  history_push(sender_name, text, is_mine, timestamp, sender_id);
 }
 
 /*
@@ -883,19 +896,19 @@ static void draw_user_list(WINDOW *win, client_context *ctx, int h, int w) {
 
     /* Resolve name using your 256-slot cache */
     lookup_username(ctx, sid, name, sizeof(name));
-    
+
     if (name[0] == '\0') {
-        snprintf(name, sizeof(name), "[%u]", (unsigned int)sid);
+      snprintf(name, sizeof(name), "[%u]", (unsigned int)sid);
     }
 
     if (sid == ctx->account_id) {
-        wattron(win, COLOR_PAIR(COLOR_PAIR_MINE) | A_BOLD);
-        mvwprintw(win, i + 1, 1, "> %-16s", ctx->username);
-        wattroff(win, COLOR_PAIR(COLOR_PAIR_MINE) | A_BOLD);
+      wattron(win, COLOR_PAIR(COLOR_PAIR_MINE) | A_BOLD);
+      mvwprintw(win, i + 1, 1, "> %-16s", ctx->username);
+      wattroff(win, COLOR_PAIR(COLOR_PAIR_MINE) | A_BOLD);
     } else {
-        wattron(win, COLOR_PAIR(COLOR_PAIR_THEIRS));
-        mvwprintw(win, i + 1, 1, "  %-16s", name);
-        wattroff(win, COLOR_PAIR(COLOR_PAIR_THEIRS));
+      wattron(win, COLOR_PAIR(COLOR_PAIR_THEIRS));
+      mvwprintw(win, i + 1, 1, "  %-16s", name);
+      wattroff(win, COLOR_PAIR(COLOR_PAIR_THEIRS));
     }
   }
   wnoutrefresh(win);
@@ -914,7 +927,6 @@ static void draw_user_list(WINDOW *win, client_context *ctx, int h, int w) {
 //   int inp_y;
 //   WINDOW *msg_win;
 //   WINDOW *inp_win;
-
 
 //   snprintf(title_right, sizeof(title_right), "User: %s   Channel: %u",
 //            ctx->username, (unsigned int)ctx->current_channel_id);
@@ -1020,7 +1032,8 @@ static void draw_user_list(WINDOW *win, client_context *ctx, int h, int w) {
 
 //     /* ---- SELECT MODE keys ---- */
 //     if (s_select_mode) {
-//       int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+//       int total = s_history_total < HISTORY_MAX ? s_history_total :
+//       HISTORY_MAX;
 
 //       if (ch == ASCII_ESC) {
 //         s_select_mode = 0;
@@ -1083,8 +1096,8 @@ static void draw_user_list(WINDOW *win, client_context *ctx, int h, int w) {
 
 //     if (ch == KEY_UP) {
 //       /* Enter select mode, starting at the most-recent message */
-//       int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
-//       if (total > 0) {
+//       int total = s_history_total < HISTORY_MAX ? s_history_total :
+//       HISTORY_MAX; if (total > 0) {
 //         s_select_mode = 1;
 //         s_selected_index = total - 1; /* newest */
 //         s_scroll_offset = 0;
@@ -1420,15 +1433,15 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
   delwin(msg_win);
   delwin(user_win);
   delwin(inp_win);
-  
+
   clear();
   refresh();
-  
+
   if (ctx->state != STATE_LOGGED_IN) {
     close(ctx->active_sock_fd);
     ctx->active_sock_fd = -1;
     return CHAT_EXIT_LOGOUT;
   }
-  
+
   return CHAT_EXIT_CHANNEL_LIST;
 }

@@ -107,144 +107,124 @@ uint64_t network_send_message(client_context *ctx, const char *text) {
   return ms_ts;
 }
 
-int network_receive_pending(client_context *ctx,
-                            void (*on_message)(const char *sender_id,
-                                               const char *text,
-                                               const void *userdata),
+int network_receive_pending(client_context *ctx, message_cb on_message,
                             void *userdata) {
-  // Non-blocking peek — return immediately if nothing is ready
   struct pollfd pfd = {.fd = ctx->active_sock_fd, .events = POLLIN};
-  int ready = poll(&pfd, 1, 0);
-  if (ready <= 0) {
+  if (poll(&pfd, 1, 0) <= 0) {
     return 0;
   }
 
   big_header_t header;
-  ssize_t recvd =
-      recv(ctx->active_sock_fd, &header, sizeof(header), MSG_WAITALL);
-  if (recvd <= 0) {
+  if (recv(ctx->active_sock_fd, &header, sizeof(header), MSG_WAITALL) <= 0) {
     return -1;
   }
 
   uint32_t body_size = ntohl(header.body);
 
-  if (header.type == 0x3B) {
-    if (body_size < sizeof(uint16_t)) {
-        discard_body(ctx, body_size);
-        return 0;
-    }
-
-    uint16_t count_be;
-    recv(ctx->active_sock_fd, &count_be, sizeof(count_be), MSG_WAITALL);
-    ctx->channel_user_count = ntohs(count_be);
-
-    // Limit to our array size
-    uint16_t to_read = ctx->channel_user_count;
-    if (to_read > MAX_CHANNEL_USERS) to_read = MAX_CHANNEL_USERS;
-
-    // Read the IDs (assuming 1 byte per user ID)
-    recv(ctx->active_sock_fd, ctx->channel_users, to_read, MSG_WAITALL);
-
-    // Drain any remaining bytes if the server sent more than we can hold
-    if (body_size > (sizeof(uint16_t) + to_read)) {
-        discard_body(ctx, body_size - (sizeof(uint16_t) + to_read));
-    }
-
-    return 1; // Return 1 so the UI loop knows it needs to redraw!
-  }
-
+  /* ---- 0x31 Send Message ACK (body always empty per RFC) ---- */
   if (header.type == TYPE_SEND_MESSAGE_RESPONSE) {
-    /* The server sends back the official timestamp in the body (8 bytes) */
-    if (body_size >= (uint32_t)sizeof(uint64_t)) {
-      uint64_t official_ts_be;
-
-      if (recv(ctx->active_sock_fd, &official_ts_be, sizeof(official_ts_be),
-               MSG_WAITALL) != (ssize_t)sizeof(official_ts_be)) {
-        return -1;
-      }
-
-      /* Drain any extra padding the server might have accidentally included */
-      if (body_size > (uint32_t)sizeof(official_ts_be)) {
-        discard_body(ctx, body_size - (uint32_t)sizeof(official_ts_be));
-      }
-
-      /* Update the UI with the host-byte-order timestamp */
-      extern void ui_update_last_message_timestamp(uint64_t ts);
-      ui_update_last_message_timestamp(be64toh(official_ts_be));
-    } else {
-      discard_body(ctx, body_size);
-    }
+    discard_body(ctx, body_size);
     return 0;
   }
 
+  /* ---- 0x35 Edit ACK / 0x37 Delete ACK ---- */
   if (header.type == TYPE_EDIT_MESSAGE_RESPONSE ||
       header.type == TYPE_DELETE_MESSAGE_RESPONSE) {
     discard_body(ctx, body_size);
     return 0;
   }
 
+  /* ---- 0x3B User List broadcast ---- */
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)
+  if (header.type == 0x3B) {
+    if (body_size < sizeof(uint16_t)) {
+      discard_body(ctx, body_size);
+      return 0;
+    }
+    uint16_t count_be;
+    recv(ctx->active_sock_fd, &count_be, sizeof(count_be), MSG_WAITALL);
+    ctx->channel_user_count = ntohs(count_be);
+
+    uint16_t to_read = ctx->channel_user_count;
+    if (to_read > MAX_SENDER_ID) {
+      to_read = MAX_SENDER_ID;
+    }
+    recv(ctx->active_sock_fd, ctx->channel_users, to_read, MSG_WAITALL);
+
+    uint32_t consumed = (uint32_t)sizeof(uint16_t) + to_read;
+    if (body_size > consumed) {
+      discard_body(ctx, body_size - consumed);
+    }
+    return 1;
+  }
+
+  /* ---- 0x33 Get Message Response ---- */
   if (header.type == TYPE_GET_MESSAGE_RESPONSE) {
-    if (body_size < sizeof(big_get_message_t)) {
+    if (body_size < (uint32_t)sizeof(big_get_message_t)) {
       discard_body(ctx, body_size);
       return -1;
     }
 
-    big_get_message_t *msg = malloc(body_size + 1); // +1 for null terminator
+    big_get_message_t *msg = malloc(body_size + 1);
     if (!msg) {
       discard_body(ctx, body_size);
       return -1;
     }
 
-    recvd = recv(ctx->active_sock_fd, msg, body_size, MSG_WAITALL);
-    if (recvd != (ssize_t)body_size) {
+    if (recv(ctx->active_sock_fd, msg, body_size, MSG_WAITALL) !=
+        (ssize_t)body_size) {
       free(msg);
       return -1;
     }
 
+    /* Wrong channel — discard */
     if (msg->channel_id != ctx->current_channel_id) {
       free(msg);
       return 0;
     }
 
-    if (msg->sender_id == ctx->account_id && ctx->account_id != 0) {
+    uint64_t ts_official = be64toh(msg->timestamp);
+    uint8_t sid = msg->sender_id;
+
+    uint16_t msg_len = ntohs(msg->message_length);
+    uint32_t max_pay = body_size - (uint32_t)sizeof(big_get_message_t);
+    if ((uint32_t)msg_len > max_pay) {
+      msg_len = (uint16_t)max_pay;
+    }
+    char *text = (char *)msg->message;
+    text[msg_len] = '\0';
+
+    /*
+     * OWN ECHO: patch provisional timestamp → official, suppress display.
+     *
+     * We pass 0 as provisional_ts: ui_update_last_message_timestamp will
+     * search backwards for the most-recent is_mine entry that still holds
+     * a provisional (non-server) timestamp and patch it with official_ts.
+     */
+    if (sid == ctx->account_id) {
+      ui_update_last_message_timestamp(0, ts_official);
       free(msg);
       return 0;
     }
 
+    /* Other sender — resolve name and deliver */
     char sender_name[USERNAME_LENGTH + 1];
     memset(sender_name, 0, sizeof(sender_name));
-
-    if (msg->sender_id == ctx->account_id) {
-      strncpy(sender_name, ctx->username, USERNAME_LENGTH);
-    } else {
-      lookup_username(ctx, msg->sender_id, sender_name, sizeof(sender_name));
-      if (sender_name[0] == '\0') {
-        snprintf(sender_name, sizeof(sender_name), "[%u]",
-                 (unsigned int)msg->sender_id);
-      }
+    lookup_username(ctx, sid, sender_name, sizeof(sender_name));
+    if (sender_name[0] == '\0') {
+      snprintf(sender_name, sizeof(sender_name), "[%u]", (unsigned int)sid);
     }
-
-    uint16_t msg_len = ntohs(msg->message_length);
-
-    // Null-terminate safely — malloc gave us body_size+1 bytes
-    char *text = (char *)msg->message;
-    if (msg_len > body_size - sizeof(big_get_message_t)) {
-      msg_len = (uint16_t)(body_size - sizeof(big_get_message_t));
-    }
-    text[msg_len] = '\0';
 
     if (on_message) {
-      on_message(sender_name, text, userdata);
+      on_message(sender_name, text, userdata, ts_official, sid);
     }
 
     free(msg);
     return 1;
   }
 
-  // Unknown packet type — drain and continue
+  /* Unknown / unhandled — drain silently */
   discard_body(ctx, body_size);
-  fprintf(stderr, "DEBUG: unexpected type 0x%02X size %u\n", header.type,
-          body_size);
   return 0;
 }
 
@@ -375,13 +355,25 @@ void lookup_username(client_context *ctx, uint8_t sender_id, char *out_name,
       (ssize_t)sizeof(resp_hdr)) {
     goto cleanup;
   }
-  if (resp_hdr.type != TYPE_GET_USER_INFO_RESPONSE) {
-    goto cleanup;
-  }
-  if (resp_hdr.status != STATUS_OK) {
-    goto cleanup;
-  }
-  if (ntohl(resp_hdr.body) != sizeof(big_user_info_t)) {
+
+  uint32_t body_size = ntohl(resp_hdr.body);
+
+  /* TCP DESYNC FIX: Check for errors or size mismatches FIRST */
+  if (resp_hdr.type != TYPE_GET_USER_INFO_RESPONSE ||
+      resp_hdr.status != STATUS_OK || body_size != sizeof(big_user_info_t)) {
+
+    /* Safely drain the socket to prevent the next recv() from reading garbage
+     */
+    if (body_size > 0) {
+      char *junk = malloc(body_size);
+      if (junk) {
+        recv(ctx->active_sock_fd, junk, body_size, MSG_WAITALL);
+        free(junk);
+      }
+    }
+
+    /* Fallback to ID tag if the server failed the lookup */
+    snprintf(out_name, out_size, "[%u]", (unsigned int)sender_id);
     goto cleanup;
   }
 

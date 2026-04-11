@@ -16,21 +16,24 @@ void network_execute_messaging_loop(client_context *ctx);
 
 uint64_t network_send_message(client_context *ctx, const char *text);
 
+/* Unified callback signature for both history and real-time messages */
+typedef void (*message_cb)(const char *sender_name,
+                           const char *text,
+                           const void *userdata,
+                           uint64_t    timestamp,
+                           uint8_t     sender_id);
+
+/* Update network_receive_pending to use the unified callback */
 int network_receive_pending(client_context *ctx,
-                            void (*on_message)(const char *sender_name,
-                                               const char *text,
-                                               const void *userdata),
+                            message_cb on_message,
                             void *userdata);
 
 void lookup_username(client_context *ctx, uint8_t sender_id, char *out_name,
                      size_t out_size);
 
+/* network_fetch_history already uses this signature, keep it consistent */
 void network_fetch_history(client_context *ctx,
-                           void (*on_message)(const char *sender_name,
-                                              const char *text,
-                                              const void       *userdata,
-                                              uint64_t    timestamp,
-                                              uint8_t     sender_id),
+                           message_cb on_message,
                            void *userdata,
                            uint16_t limit);
  
