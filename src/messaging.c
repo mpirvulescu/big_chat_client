@@ -187,17 +187,6 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
     uint8_t sid = msg->sender_id;
 
     uint16_t msg_len = ntohs(msg->message_length);
-
-    /* ---- DELETE MESSAGE (empty payload) ---- */
-    if (msg_len == 0) {
-      // mark message as deleted in UI
-      if (on_message) {
-        on_message("[deleted]", "", userdata, ts_official, msg->sender_id);
-      }
-      free(msg);
-      return 1;
-    }
-
     uint32_t max_pay = body_size - (uint32_t)sizeof(big_get_message_t);
     if ((uint32_t)msg_len > max_pay) {
       msg_len = (uint16_t)max_pay;
