@@ -167,6 +167,32 @@ void ui_update_last_message_timestamp(uint64_t official_ts) {
   }
 }
 
+int ui_update_message_by_timestamp(uint64_t timestamp, const char *new_text) {
+  int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+  int i;
+
+  for (i = 0; i < total; i++) {
+    chat_line_t *entry = history_get(i);
+    if (!entry || entry->timestamp != timestamp) {
+      continue;
+    }
+
+    if (new_text == NULL || new_text[0] == '\0') {
+      /* Delete */
+      entry->is_deleted = 1;
+      entry->text[0] = '\0';
+    } else {
+      /* Edit */
+      entry->is_deleted = 0;
+      strncpy(entry->text, new_text, INPUT_MAX);
+      entry->text[INPUT_MAX] = '\0';
+    }
+    return 1;
+  }
+
+  return 0; /* no match — treat as new message */
+}
+
 /* -------------------------------------------------------------------------
  * ui_init / ui_teardown
  * ---------------------------------------------------------------------- */
@@ -626,39 +652,56 @@ static void on_incoming_message(const char *sender_name, const char *text,
                                 uint8_t sender_id) {
   /* Cast away const so we can modify ctx to rescue our account_id and cache */
   client_context *ctx = (client_context *)userdata;
-
   int is_mine = 0;
+  char final_name[USERNAME_LENGTH];
 
-  /* SCENARIO 1: Normal Check (Works on good servers where 0x12 succeeds) */
-  if (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
+  strncpy(final_name, sender_name, USERNAME_LENGTH - 1);
+  final_name[USERNAME_LENGTH - 1] = '\0';
+
+  /* SCENARIO 1: We know our ID, and this message's ID perfectly matches ours */
+  if (ctx->account_id != 0 && sender_id == ctx->account_id) {
     is_mine = 1;
+    strncpy(final_name, ctx->username, USERNAME_LENGTH - 1);
+    final_name[USERNAME_LENGTH - 1] = '\0';
   }
-  /* SCENARIO 2: TEXT-BASED ID RESCUE (For broken servers where 0x12 fails ->
-     "[67]") */
-  else if (ctx->account_id == 0 && s_last_sent_text[0] != '\0') {
-    if (strncmp(text, s_last_sent_text, INPUT_MAX) == 0) {
-      /* The text exactly matches what we just sent! This must be us. */
-      ctx->account_id = sender_id;
-      is_mine = 1;
-      s_last_sent_text[0] = '\0'; /* Clear it so we only rescue once */
+  /* SCENARIO 2: TEXT-BASED ID RESCUE (For broken servers where 0x12 fails) */
+  else if (ctx->account_id == 0 && s_last_sent_text[0] != '\0' &&
+           strncmp(text, s_last_sent_text, INPUT_MAX) == 0) {
+    ctx->account_id = sender_id;
+    is_mine = 1;
+    s_last_sent_text[0] = '\0'; /* Clear it so we only rescue once */
 
-      /* Fix the cache so future messages show your name instead of "[67]" */
-      ctx->username_cached[sender_id] = 1;
-      strncpy(ctx->username_cache[sender_id], ctx->username, USERNAME_LENGTH);
+    ctx->username_cached[sender_id] = 1;
+    strncpy(ctx->username_cache[sender_id], ctx->username, USERNAME_LENGTH - 1);
+    ctx->username_cache[sender_id][USERNAME_LENGTH - 1] = '\0';
 
-      /* Override the pointer so the UI draws your name */
-      sender_name = ctx->username;
+    strncpy(final_name, ctx->username, USERNAME_LENGTH - 1);
+    final_name[USERNAME_LENGTH - 1] = '\0';
+
+    /* Retroactively fix history messages that belong to our newly rescued ID!
+     */
+    int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+    for (int i = 0; i < total; i++) {
+      chat_line_t *line = history_get(i);
+      if (line && line->sender_id == sender_id) {
+        line->is_mine = 1;
+        strncpy(line->sender_name, ctx->username, USERNAME_LENGTH - 1);
+        line->sender_name[USERNAME_LENGTH - 1] = '\0';
+      }
     }
   }
-  /* SCENARIO 3: Normal ID check (For messages after we rescued our ID) */
-  else if (ctx->account_id != 0 && sender_id == ctx->account_id) {
-    is_mine = 1;
-    /* If the server is still sending "[67]", override it with our name */
-    sender_name = ctx->username;
+  /* SCENARIO 3: Stranger (or our old deleted account that shares our name) */
+  else {
+    /* If a stranger has our exact username (i.e. our old deleted account),
+       force the name to display the ID so we don't confuse it with ourselves.
+     */
+    if (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
+      snprintf(final_name, USERNAME_LENGTH, "[%u]", (unsigned int)sender_id);
+    }
   }
 
   /* SERVER-AUTHORITATIVE: Draw whatever the server sends us */
-  history_push(sender_name, text, is_mine, timestamp, sender_id);
+  history_push(final_name, text, is_mine, timestamp, sender_id);
 }
 
 /*
@@ -668,8 +711,25 @@ static void on_history_message(const char *sender_name, const char *text,
                                const void *userdata, uint64_t timestamp,
                                uint8_t sender_id) {
   const client_context *ctx = (const client_context *)userdata;
-  int is_mine = (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0);
-  history_push(sender_name, text, is_mine, timestamp, sender_id);
+  int is_mine = 0;
+  char final_name[USERNAME_LENGTH];
+
+  strncpy(final_name, sender_name, USERNAME_LENGTH - 1);
+  final_name[USERNAME_LENGTH - 1] = '\0';
+
+  if (ctx->account_id != 0 && sender_id == ctx->account_id) {
+    is_mine = 1;
+    strncpy(final_name, ctx->username, USERNAME_LENGTH - 1);
+    final_name[USERNAME_LENGTH - 1] = '\0';
+  } else {
+    /* Not our current ID. Even if the username string matches exactly,
+       it belongs to a deleted ghost account. */
+    if (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
+      snprintf(final_name, USERNAME_LENGTH, "[%u]", (unsigned int)sender_id);
+    }
+  }
+
+  history_push(final_name, text, is_mine, timestamp, sender_id);
 }
 
 /* =========================================================================
@@ -787,7 +847,7 @@ static void chat_poll_socket(client_context *ctx) {
  * ====================================================================== */
 
 static int chat_edit_selected(client_context *ctx, WINDOW *inp_win, int msg_h) {
-  chat_line_t *line = history_get(s_selected_index);
+  const chat_line_t *line = history_get(s_selected_index);
   if (!line || !line->is_mine || line->is_deleted || line->timestamp == 0) {
     return 0;
   }
@@ -851,13 +911,16 @@ static int chat_edit_selected(client_context *ctx, WINDOW *inp_win, int msg_h) {
       if (edit_len == 0) {
         return 0;
       }
-      if (network_edit_message(ctx, line->timestamp, edit_buf) == 0) {
-        /* Update local history */
-        strncpy(line->text, edit_buf, INPUT_MAX);
-        line->text[INPUT_MAX] = '\0';
-        return 1;
-      }
-      return 0;
+      network_edit_message(ctx, line->timestamp, edit_buf);
+      ui_update_message_by_timestamp(line->timestamp, edit_buf);
+      return 1;
+      // if (network_edit_message(ctx, line->timestamp, edit_buf) == 0) {
+      //   /* Update local history */
+      //   strncpy(line->text, edit_buf, INPUT_MAX);
+      //   line->text[INPUT_MAX] = '\0';
+      //   return 1;
+      // }
+      // return 0;
     }
 
     if (ch == KEY_BACKSPACE || ch == ASCII_DEL || ch == '\b') {
@@ -876,7 +939,7 @@ static int chat_edit_selected(client_context *ctx, WINDOW *inp_win, int msg_h) {
  * ====================================================================== */
 
 static void chat_delete_selected(client_context *ctx) {
-  chat_line_t *line = history_get(s_selected_index);
+  const chat_line_t *line = history_get(s_selected_index);
   if (!line || !line->is_mine || line->is_deleted || line->timestamp == 0) {
     return;
   }
@@ -898,11 +961,13 @@ static void chat_delete_selected(client_context *ctx) {
   if (ans != 'y' && ans != 'Y') {
     return;
   }
+  network_delete_message(ctx, line->timestamp);
+  ui_update_message_by_timestamp(line->timestamp, "");
 
-  if (network_delete_message(ctx, line->timestamp) == 0) {
-    line->is_deleted = 1;
-    line->text[0] = '\0';
-  }
+  // if (network_delete_message(ctx, line->timestamp) == 0) {
+  //   line->is_deleted = 1;
+  //   line->text[0] = '\0';
+  // }
 }
 
 static void draw_user_list(WINDOW *win, client_context *ctx, int h, int w) {

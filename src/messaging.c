@@ -147,10 +147,47 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
   /* ---- 0x35 Edit ACK / 0x37 Delete ACK ---- */
   if (header.type == TYPE_EDIT_MESSAGE_RESPONSE ||
       header.type == TYPE_DELETE_MESSAGE_RESPONSE) {
-    discard_body(ctx, body_size);
+
+    /* ROGUE SERVER FIX:
+       Some servers reflect the Request struct back in the Response instead
+       of sending a 0x33 broadcast. We must parse big_edit_message_t (43 bytes)
+       and big_delete_message_t (41 bytes), NOT big_get_message_t (44 bytes). */
+
+    if (header.type == TYPE_EDIT_MESSAGE_RESPONSE &&
+        body_size >= (uint32_t)sizeof(big_edit_message_t)) {
+      big_edit_message_t *msg = malloc(body_size + 1);
+      if (msg) {
+        if (recv(ctx->active_sock_fd, msg, body_size, MSG_WAITALL) ==
+            (ssize_t)body_size) {
+          uint64_t ts = be64toh(msg->timestamp);
+          uint16_t msg_len = ntohs(msg->message_length);
+          uint32_t max_pay = body_size - (uint32_t)sizeof(big_edit_message_t);
+          if ((uint32_t)msg_len > max_pay) {
+            msg_len = (uint16_t)max_pay;
+          }
+          char *text = (char *)msg->message;
+          text[msg_len] = '\0';
+          ui_update_message_by_timestamp(ts, text);
+        }
+        free(msg);
+      }
+    } else if (header.type == TYPE_DELETE_MESSAGE_RESPONSE &&
+               body_size >= (uint32_t)sizeof(big_delete_message_t)) {
+      big_delete_message_t *msg = malloc(body_size + 1);
+      if (msg) {
+        if (recv(ctx->active_sock_fd, msg, body_size, MSG_WAITALL) ==
+            (ssize_t)body_size) {
+          uint64_t ts = be64toh(msg->timestamp);
+          ui_update_message_by_timestamp(
+              ts, ""); /* Empty string triggers the local delete */
+        }
+        free(msg);
+      }
+    } else {
+      discard_body(ctx, body_size);
+    }
     return 0;
   }
-
   /* ---- 0x3B User List broadcast ---- */
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)
   if (header.type == 0x43) {
@@ -211,7 +248,18 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
     char *text = (char *)msg->message;
     text[msg_len] = '\0';
 
-    /* Resolve sender name */
+    /*
+     * EDIT/DELETE DETECTION:
+     * If the timestamp matches an existing history entry, this is an
+     * unsolicited edit or delete broadcast — NOT a new message.
+     * Empty text = deleted. Non-empty = edited.
+     */
+    if (ui_update_message_by_timestamp(ts_official, text)) {
+      free(msg);
+      return 1;
+    }
+
+    /* New message — resolve sender and deliver normally */
     char sender_name[USERNAME_LENGTH + 1];
     memset(sender_name, 0, sizeof(sender_name));
     lookup_username(ctx, sid, sender_name, sizeof(sender_name));
@@ -219,17 +267,12 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
       snprintf(sender_name, sizeof(sender_name), "[%u]", (unsigned int)sid);
     }
 
-    /* --- DYNAMIC ID RESCUE --- */
-    /* If we have amnesia (ID=0) and the server broadcasts our name, learn our
-     * ID! */
+    /* Learn our own account_id dynamically if still unknown */
     if (ctx->account_id == 0 &&
         strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
       ctx->account_id = sid;
-      fprintf(stderr, "DEBUG: Dynamically rescued account_id: %u\n",
-              ctx->account_id);
     }
 
-    /* Pass EVERYTHING to the UI to let it decide what to draw */
     if (on_message) {
       on_message(sender_name, text, userdata, ts_official, sid);
     }
@@ -648,37 +691,71 @@ int network_edit_message(client_context *ctx, uint64_t original_timestamp,
   p += sizeof(body);
   memcpy(p, new_text, msg_len);
 
+  /* SERVER-AUTHORITATIVE: Fire and forget! Do NOT wait for the ACK! */
   int sent_ok = (send(ctx->active_sock_fd, buf, total, 0) == (ssize_t)total);
   free(buf);
 
-  if (!sent_ok) {
-    return -1;
-  }
-
-  /* Wait for ACK */
-  struct timeval tv = {.tv_sec = 3, .tv_usec = 0};
-  struct timeval zero = {.tv_sec = 0, .tv_usec = 0};
-  setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-  big_header_t resp;
-  int rc = 0;
-  if (recv(ctx->active_sock_fd, &resp, sizeof(resp), MSG_WAITALL) !=
-      (ssize_t)sizeof(resp)) {
-    rc = -1;
-    goto cleanup;
-  }
-  discard_body(ctx, ntohl(resp.body));
-  if (resp.type != TYPE_EDIT_MESSAGE_RESPONSE || resp.status != STATUS_OK) {
-    rc = -1;
-  }
-
-cleanup:
-  setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &zero, sizeof(zero));
-  return rc;
+  return sent_ok ? 0 : -1;
 }
 
-/* network_delete_message  (0x36 / 0x37)*/
+// int network_edit_message(client_context *ctx, uint64_t original_timestamp,
+//                          const char *new_text) {
+//   uint16_t msg_len = (uint16_t)strlen(new_text);
+//   size_t body_size = sizeof(big_edit_message_t) + msg_len;
+//   size_t total = sizeof(big_header_t) + body_size;
 
+//   uint8_t *buf = calloc(1, total);
+//   if (!buf) {
+//     return -1;
+//   }
+
+//   big_header_t hdr =
+//       make_header(TYPE_EDIT_MESSAGE_REQUEST, (uint32_t)body_size);
+
+//   big_edit_message_t body;
+//   memset(&body, 0, sizeof(body));
+//   fill_authentication_credentials(ctx, &body.authentication);
+//   body.timestamp = htobe64(original_timestamp);
+//   body.message_length = htons(msg_len);
+//   body.channel_id = ctx->current_channel_id;
+
+//   uint8_t *p = buf;
+//   memcpy(p, &hdr, sizeof(hdr));
+//   p += sizeof(hdr);
+//   memcpy(p, &body, sizeof(body));
+//   p += sizeof(body);
+//   memcpy(p, new_text, msg_len);
+
+//   int sent_ok = (send(ctx->active_sock_fd, buf, total, 0) == (ssize_t)total);
+//   free(buf);
+
+//   if (!sent_ok) {
+//     return -1;
+//   }
+
+//   /* Wait for ACK */
+//   struct timeval tv = {.tv_sec = 3, .tv_usec = 0};
+//   struct timeval zero = {.tv_sec = 0, .tv_usec = 0};
+//   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+//   big_header_t resp;
+//   int rc = 0;
+//   if (recv(ctx->active_sock_fd, &resp, sizeof(resp), MSG_WAITALL) !=
+//       (ssize_t)sizeof(resp)) {
+//     rc = -1;
+//     goto cleanup;
+//   }
+//   discard_body(ctx, ntohl(resp.body));
+//   if (resp.type != TYPE_EDIT_MESSAGE_RESPONSE || resp.status != STATUS_OK) {
+//     rc = -1;
+//   }
+
+// cleanup:
+//   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &zero,
+//   sizeof(zero)); return rc;
+// }
+
+/* network_delete_message  (0x36 / 0x37)*/
 int network_delete_message(client_context *ctx, uint64_t original_timestamp) {
   big_delete_message_t body;
   memset(&body, 0, sizeof(body));
@@ -692,29 +769,55 @@ int network_delete_message(client_context *ctx, uint64_t original_timestamp) {
   if (send(ctx->active_sock_fd, &hdr, sizeof(hdr), 0) != (ssize_t)sizeof(hdr)) {
     return -1;
   }
+
+  /* SERVER-AUTHORITATIVE: Fire and forget! Do NOT wait for the ACK! */
   if (send(ctx->active_sock_fd, &body, sizeof(body), 0) !=
       (ssize_t)sizeof(body)) {
     return -1;
   }
 
-  /* Wait for ACK */
-  struct timeval tv = {.tv_sec = 3, .tv_usec = 0};
-  struct timeval zero = {.tv_sec = 0, .tv_usec = 0};
-  setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-  big_header_t resp;
-  int rc = 0;
-  if (recv(ctx->active_sock_fd, &resp, sizeof(resp), MSG_WAITALL) !=
-      (ssize_t)sizeof(resp)) {
-    rc = -1;
-    goto cleanup;
-  }
-  discard_body(ctx, ntohl(resp.body));
-  if (resp.type != TYPE_DELETE_MESSAGE_RESPONSE || resp.status != STATUS_OK) {
-    rc = -1;
-  }
-
-cleanup:
-  setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &zero, sizeof(zero));
-  return rc;
+  return 0;
 }
+
+// int network_delete_message(client_context *ctx, uint64_t original_timestamp)
+// {
+//   big_delete_message_t body;
+//   memset(&body, 0, sizeof(body));
+//   fill_authentication_credentials(ctx, &body.authentication);
+//   body.timestamp = htobe64(original_timestamp);
+//   body.channel_id = ctx->current_channel_id;
+
+//   big_header_t hdr =
+//       make_header(TYPE_DELETE_MESSAGE_REQUEST, (uint32_t)sizeof(body));
+
+//   if (send(ctx->active_sock_fd, &hdr, sizeof(hdr), 0) !=
+//   (ssize_t)sizeof(hdr)) {
+//     return -1;
+//   }
+//   if (send(ctx->active_sock_fd, &body, sizeof(body), 0) !=
+//       (ssize_t)sizeof(body)) {
+//     return -1;
+//   }
+
+//   /* Wait for ACK */
+//   struct timeval tv = {.tv_sec = 3, .tv_usec = 0};
+//   struct timeval zero = {.tv_sec = 0, .tv_usec = 0};
+//   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+//   big_header_t resp;
+//   int rc = 0;
+//   if (recv(ctx->active_sock_fd, &resp, sizeof(resp), MSG_WAITALL) !=
+//       (ssize_t)sizeof(resp)) {
+//     rc = -1;
+//     goto cleanup;
+//   }
+//   discard_body(ctx, ntohl(resp.body));
+//   if (resp.type != TYPE_DELETE_MESSAGE_RESPONSE || resp.status != STATUS_OK)
+//   {
+//     rc = -1;
+//   }
+
+// cleanup:
+//   setsockopt(ctx->active_sock_fd, SOL_SOCKET, SO_RCVTIMEO, &zero,
+//   sizeof(zero)); return rc;
+// }

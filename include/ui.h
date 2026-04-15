@@ -79,6 +79,9 @@ chat_exit_reason_t    ui_screen_chat(client_context *ctx);
 int ui_confirm_delete_account(void);
 
 void ui_update_last_message_timestamp(uint64_t official_ts);
+
+int ui_update_message_by_timestamp(uint64_t timestamp, const char *new_text);
+
  
  
 #endif /* UI_H */
