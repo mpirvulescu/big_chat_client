@@ -71,6 +71,7 @@ static int s_history_total = 0; /* total ever added (unbounded)    */  // NOLINT
 static int s_scroll_offset = 0; /* 0 = bottom; >0 = scrolled up   */   // NOLINT
 static int s_select_mode = 0; /* 0 = normal, 1 = select mode     */    // NOLINT
 static int s_selected_index = 0; /* absolute index into ring buffer */ // NOLINT
+static char s_last_sent_text[INPUT_MAX + 1] = {0};                     // NOLINT
 
 /* -------------------------------------------------------------------------
  * Persistent global windows
@@ -623,32 +624,40 @@ int ui_confirm_delete_account(void) {
 static void on_incoming_message(const char *sender_name, const char *text,
                                 const void *userdata, uint64_t timestamp,
                                 uint8_t sender_id) {
-  const client_context *ctx = (const client_context *)userdata;
-  int is_mine = (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0);
+  /* Cast away const so we can modify ctx to rescue our account_id and cache */
+  client_context *ctx = (client_context *)userdata;
 
-  /* MULTI-TERMINAL & AMNESIA DEDUPLICATION */
-  /* Check if we already have this exact server timestamp in our ring buffer. */
-  int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+  int is_mine = 0;
 
-  /* Scan backwards through history (optimization: only check the last 20
-   * messages) */
-  int start_idx =
-      (total >
-       20) /*NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)*/
-          ? (total -
-             20) /*NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)*/
-          : 0;
-  for (int i = total - 1; i >= start_idx; i--) {
-    const chat_line_t *line = history_get(i);
-    if (line && line->timestamp == timestamp) {
-      /* This is an echo of a message we sent locally.
-         We already patched its timestamp via the 0x31 ACK. Drop it! */
-      return;
+  /* SCENARIO 1: Normal Check (Works on good servers where 0x12 succeeds) */
+  if (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
+    is_mine = 1;
+  }
+  /* SCENARIO 2: TEXT-BASED ID RESCUE (For broken servers where 0x12 fails ->
+     "[67]") */
+  else if (ctx->account_id == 0 && s_last_sent_text[0] != '\0') {
+    if (strncmp(text, s_last_sent_text, INPUT_MAX) == 0) {
+      /* The text exactly matches what we just sent! This must be us. */
+      ctx->account_id = sender_id;
+      is_mine = 1;
+      s_last_sent_text[0] = '\0'; /* Clear it so we only rescue once */
+
+      /* Fix the cache so future messages show your name instead of "[67]" */
+      ctx->username_cached[sender_id] = 1;
+      strncpy(ctx->username_cache[sender_id], ctx->username, USERNAME_LENGTH);
+
+      /* Override the pointer so the UI draws your name */
+      sender_name = ctx->username;
     }
   }
+  /* SCENARIO 3: Normal ID check (For messages after we rescued our ID) */
+  else if (ctx->account_id != 0 && sender_id == ctx->account_id) {
+    is_mine = 1;
+    /* If the server is still sending "[67]", override it with our name */
+    sender_name = ctx->username;
+  }
 
-  /* If the timestamp isn't in our history, draw it!
-     (This catches messages from other people AND your twin terminal!) */
+  /* SERVER-AUTHORITATIVE: Draw whatever the server sends us */
   history_push(sender_name, text, is_mine, timestamp, sender_id);
 }
 
@@ -1420,6 +1429,9 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
         ctx->state = STATE_LOGGED_IN;
         break;
       }
+
+      strncpy(s_last_sent_text, input, INPUT_MAX);
+      s_last_sent_text[INPUT_MAX] = '\0';
 
       // PLEASE WORK
       network_send_message(ctx, input);
