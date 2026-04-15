@@ -183,7 +183,7 @@ void network_execute_account_creation(client_context *ctx) {
 
 void network_execute_login(client_context *ctx) {
   // printf("\n--- Phase 3: Login ---\n");
-  fprintf(stderr, "DEBUG: account_id at login start = %u\n", ctx->account_id);
+  //fprintf(stderr, "DEBUG: account_id at login start = %u\n", ctx->account_id);
 
   if (convert_address(ctx) != 0) {
     ctx->error_message = "Invalid Server IP format.\n";
@@ -390,8 +390,8 @@ static void recv_account_creation_response(client_context *ctx) {
     }
 
     ctx->account_id = resp_body.client_id;
-    fprintf(stderr, "DEBUG: 0x11 body_size=%u expected=%zu client_id=%u\n",
-            bsize, sizeof(big_create_account_req_t), resp_body.client_id);
+    // fprintf(stderr, "DEBUG: 0x11 body_size=%u expected=%zu client_id=%u\n",
+    //         bsize, sizeof(big_create_account_req_t), resp_body.client_id);
 
   } else if (bsize > 0) {
     char *junk = malloc(bsize);
