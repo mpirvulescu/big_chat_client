@@ -152,14 +152,11 @@ static chat_line_t *history_get(int i) {
   return &s_history[idx];
 }
 
-void ui_update_last_message_timestamp(uint64_t provisional_ts,
-                                      uint64_t official_ts) {
+void ui_update_last_message_timestamp(uint64_t official_ts) {
   int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
   int i;
 
-  (void)provisional_ts; /* reserved for future use */
-
-  /* Walk backwards: find the newest is_mine entry and patch it */
+  /* Walk backwards: find the newest is_mine entry and patch its timestamp */
   for (i = total - 1; i >= 0; i--) {
     chat_line_t *entry = history_get(i);
     if (entry && entry->is_mine && !entry->is_deleted) {
@@ -629,7 +626,29 @@ static void on_incoming_message(const char *sender_name, const char *text,
   const client_context *ctx = (const client_context *)userdata;
   int is_mine = (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0);
 
-  /* Save the OFFICIAL timestamp immediately */
+  /* MULTI-TERMINAL & AMNESIA DEDUPLICATION */
+  /* Check if we already have this exact server timestamp in our ring buffer. */
+  int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+
+  /* Scan backwards through history (optimization: only check the last 20
+   * messages) */
+  int start_idx =
+      (total >
+       20) /*NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)*/
+          ? (total -
+             20) /*NOLINT(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)*/
+          : 0;
+  for (int i = total - 1; i >= start_idx; i--) {
+    const chat_line_t *line = history_get(i);
+    if (line && line->timestamp == timestamp) {
+      /* This is an echo of a message we sent locally.
+         We already patched its timestamp via the 0x31 ACK. Drop it! */
+      return;
+    }
+  }
+
+  /* If the timestamp isn't in our history, draw it!
+     (This catches messages from other people AND your twin terminal!) */
   history_push(sender_name, text, is_mine, timestamp, sender_id);
 }
 
@@ -1402,9 +1421,12 @@ chat_exit_reason_t ui_screen_chat(client_context *ctx) {
         break;
       }
 
+      // PLEASE WORK
+      network_send_message(ctx, input);
+
       /* Hybrid UI: Draw locally AND send to server */
-      uint64_t ts = network_send_message(ctx, input);
-      history_push(ctx->username, input, 1, ts, ctx->account_id);
+      // uint64_t ts = network_send_message(ctx, input);
+      // history_push(ctx->username, input, 1, ts, ctx->account_id);
 
       memset(input, 0, sizeof(input));
       input_len = 0;

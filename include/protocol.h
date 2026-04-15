@@ -148,6 +148,16 @@ typedef struct PACKED {
     char message[];
 } big_get_message_t;
 
+// //NEW FOR JACOB
+// typedef struct PACKED {
+//     char sender_username[USERNAME_LENGTH]; 
+//     uint64_t timestamp;
+//     uint16_t message_length;
+//     uint8_t channel_id;
+//     uint8_t sender_id;
+//     char message[];
+// } big_get_message_resp_t;
+
 typedef struct PACKED {
     big_auth_t authentication;
     uint64_t timestamp;

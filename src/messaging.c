@@ -28,6 +28,7 @@
 #include "messaging.h"
 #include "network_funcs.h"
 #include "protocol.h"
+#include "ui.h"
 #include "utils.h"
 #include <arpa/inet.h>
 #include <errno.h>
@@ -123,7 +124,23 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
 
   /* ---- 0x31 Send Message ACK (body always empty per RFC) ---- */
   if (header.type == TYPE_SEND_MESSAGE_RESPONSE) {
-    discard_body(ctx, body_size);
+    if (body_size >= (uint32_t)sizeof(uint64_t)) {
+      uint64_t official_ts_be;
+      if (recv(ctx->active_sock_fd, &official_ts_be, sizeof(official_ts_be),
+               MSG_WAITALL) != (ssize_t)sizeof(official_ts_be)) {
+        return -1;
+      }
+
+      /* Drain any extra padding the server might have accidentally included */
+      if (body_size > (uint32_t)sizeof(official_ts_be)) {
+        discard_body(ctx, body_size - (uint32_t)sizeof(official_ts_be));
+      }
+
+      /* Lock in the official timestamp locally (NO EXTERN DECLARATION) */
+      ui_update_last_message_timestamp(be64toh(official_ts_be));
+    } else {
+      discard_body(ctx, body_size);
+    }
     return 0;
   }
 
@@ -136,7 +153,7 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
 
   /* ---- 0x3B User List broadcast ---- */
   // NOLINTNEXTLINE(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers,-warnings-as-errors)
-  if (header.type == 0x3B) {
+  if (header.type == 0x43) {
     if (body_size < sizeof(uint16_t)) {
       discard_body(ctx, body_size);
       return 0;
@@ -194,20 +211,7 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
     char *text = (char *)msg->message;
     text[msg_len] = '\0';
 
-    /*
-     * OWN ECHO: patch provisional timestamp → official, suppress display.
-     *
-     * We pass 0 as provisional_ts: ui_update_last_message_timestamp will
-     * search backwards for the most-recent is_mine entry that still holds
-     * a provisional (non-server) timestamp and patch it with official_ts.
-     */
-    if (sid == ctx->account_id) {
-      ui_update_last_message_timestamp(0, ts_official);
-      free(msg);
-      return 0;
-    }
-
-    /* Other sender — resolve name and deliver */
+    /* Resolve sender name */
     char sender_name[USERNAME_LENGTH + 1];
     memset(sender_name, 0, sizeof(sender_name));
     lookup_username(ctx, sid, sender_name, sizeof(sender_name));
@@ -215,6 +219,17 @@ int network_receive_pending(client_context *ctx, message_cb on_message,
       snprintf(sender_name, sizeof(sender_name), "[%u]", (unsigned int)sid);
     }
 
+    /* --- DYNAMIC ID RESCUE --- */
+    /* If we have amnesia (ID=0) and the server broadcasts our name, learn our
+     * ID! */
+    if (ctx->account_id == 0 &&
+        strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
+      ctx->account_id = sid;
+      fprintf(stderr, "DEBUG: Dynamically rescued account_id: %u\n",
+              ctx->account_id);
+    }
+
+    /* Pass EVERYTHING to the UI to let it decide what to draw */
     if (on_message) {
       on_message(sender_name, text, userdata, ts_official, sid);
     }

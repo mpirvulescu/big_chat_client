@@ -45,6 +45,72 @@ void network_execute_channel_list(client_context *ctx) {
   recv_channel_list_response(ctx);
 }
 
+void network_fetch_own_account_id(client_context *ctx) {
+  big_user_info_t req;
+  memset(&req, 0, sizeof(req));
+  fill_authentication_credentials(ctx, &req.authentication);
+
+  /* We want to look up OUR OWN username */
+  strncpy(req.target_username, ctx->username, USERNAME_LENGTH);
+  req.user_id = 0; /* Let the server fill this in */
+
+  big_header_t hdr = {.version = BIG_CHAT_VERSION,
+                      .type = TYPE_GET_USER_INFO_REQUEST,
+                      .status = 0,
+                      .reserved = 0,
+                      .body = htonl(sizeof(req))};
+
+  if (send(ctx->active_sock_fd, &hdr, sizeof(hdr), 0) != sizeof(hdr)) {
+    ctx->error_message = "Failed to request own user info.\n";
+    fatal_error(ctx);
+  }
+  if (send(ctx->active_sock_fd, &req, sizeof(req), 0) != sizeof(req)) {
+    ctx->error_message = "Failed to send user info body.\n";
+    fatal_error(ctx);
+  }
+
+  /* Wait for the 0x13 Response */
+  big_header_t resp_hdr;
+  if (recv_all(ctx->active_sock_fd, &resp_hdr, sizeof(resp_hdr)) !=
+      sizeof(resp_hdr)) {
+    ctx->error_message = "Failed to receive user info response.\n";
+    fatal_error(ctx);
+  }
+
+  uint32_t body_size = ntohl(resp_hdr.body);
+
+  fprintf(stderr,
+          "DEBUG: resp type=0x%02X status=0x%02X body_size=%u expected=%zu\n",
+          resp_hdr.type, resp_hdr.status, body_size, sizeof(big_user_info_t));
+
+  if (resp_hdr.type != TYPE_GET_USER_INFO_RESPONSE ||
+      resp_hdr.status != STATUS_OK) {
+    /* If the server doesn't support 0x12, we drain and fallback to 0 */
+    char *junk = malloc(body_size);
+    if (junk) {
+      recv_all(ctx->active_sock_fd, junk, body_size);
+      free(junk);
+    }
+    ctx->account_id = 0;
+    return;
+  }
+
+  if (body_size == sizeof(big_user_info_t)) {
+    big_user_info_t resp;
+    recv_all(ctx->active_sock_fd, &resp, sizeof(resp));
+    /* SUCCESS! We have rescued our Account ID */
+    ctx->account_id = resp.user_id;
+  } else {
+    /* Handle unexpected body sizes safely */
+    char *junk = malloc(body_size);
+    if (junk) {
+      recv_all(ctx->active_sock_fd, junk, body_size);
+      free(junk);
+    }
+    ctx->account_id = 0;
+  }
+}
+
 static void send_channel_list_request(client_context *ctx) {
   big_channel_list_t body;
   memset(&body, 0, sizeof(body));

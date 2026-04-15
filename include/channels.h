@@ -10,5 +10,6 @@ typedef struct {
 
 void network_execute_channel_list(client_context *ctx);
 void network_execute_channel_join(client_context *ctx, uint8_t channel_id);
+void network_fetch_own_account_id(client_context *ctx);
 
 #endif /* CHANNELS_H*/

@@ -183,23 +183,24 @@ void network_execute_account_creation(client_context *ctx) {
 
 void network_execute_login(client_context *ctx) {
   // printf("\n--- Phase 3: Login ---\n");
+  fprintf(stderr, "DEBUG: account_id at login start = %u\n", ctx->account_id);
 
   if (convert_address(ctx) != 0) {
     ctx->error_message = "Invalid Server IP format.\n";
     fatal_error(ctx);
   }
 
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
+  if (ctx->active_sock_fd == -1) {
+    if (convert_address(ctx) != 0) {
+      ctx->error_message = "Invalid Server IP format.\n";
+      fatal_error(ctx);
+    }
+    socket_create(ctx);
+    socket_connect(ctx, ctx->manager_port);
+  }
 
   send_login_logout_request(ctx, 1);
   recv_login_logout_response(ctx);
-
-  // cleanup connection
-  // close(ctx->active_sock_fd);
-  // ctx->active_sock_fd = -1;
-
-  // printf("Login Successful.\n");
 }
 
 void network_execute_logout(client_context *ctx) {
@@ -210,15 +211,17 @@ void network_execute_logout(client_context *ctx) {
     fatal_error(ctx);
   }
 
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
+  // socket_create(ctx);
+  // socket_connect(ctx, ctx->manager_port);
 
   send_login_logout_request(ctx, 0);
   recv_login_logout_response(ctx);
 
   // cleanup connection
-  close(ctx->active_sock_fd);
-  ctx->active_sock_fd = -1;
+  if (ctx->active_sock_fd != -1) {
+    close(ctx->active_sock_fd);
+    ctx->active_sock_fd = -1;
+  }
 
   // printf("Logout Successful.\n");
 }
@@ -387,7 +390,8 @@ static void recv_account_creation_response(client_context *ctx) {
     }
 
     ctx->account_id = resp_body.client_id;
-    // printf("Assigned account ID: %u\n", ctx->account_id);
+    fprintf(stderr, "DEBUG: 0x11 body_size=%u expected=%zu client_id=%u\n",
+            bsize, sizeof(big_create_account_req_t), resp_body.client_id);
 
   } else if (bsize > 0) {
     char *junk = malloc(bsize);
@@ -494,9 +498,6 @@ static void send_login_logout_request(client_context *ctx,
 channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
   channel_list_choice_t choice;
 
-  // fprintf(stderr, "DEBUG: sock_fd before channel list: %d\n",
-  // ctx->active_sock_fd);
-  // Reuse the socket already open from login
   network_execute_channel_list(ctx);
 
   if (ctx->channel_count == 0) {
@@ -506,14 +507,14 @@ channel_list_choice_t network_execute_channel_phase(client_context *ctx) {
 
   choice = ui_screen_channel_list(ctx);
 
-  if (choice.action == CHANNEL_LIST_LOGOUT) {
+  /* FIX 1: Return immediately on BOTH Logout and Delete */
+  if (choice.action == CHANNEL_LIST_LOGOUT ||
+      choice.action == CHANNEL_LIST_DELETE) {
     return choice;
   }
 
-  // Still on the same socket — just join directly
+  /* Now it will only try to join if the action is actually JOIN */
   network_execute_channel_join(ctx, choice.channel_id);
-  // fprintf(stderr, "DEBUG: sock_fd after channel join: %d\n",
-  // ctx->active_sock_fd);
 
   return choice;
 }
@@ -589,22 +590,24 @@ static ssize_t recv_all(int sock, void *buffer, size_t length) {
 }
 
 void network_execute_delete_account(client_context *ctx) {
-
-  if (convert_address(ctx) != 0) {
-    ctx->error_message = "Invalid Server IP format.\n";
-    fatal_error(ctx);
-  }
-
-  socket_create(ctx);
-  socket_connect(ctx, ctx->manager_port);
+  /* FIX 2: Do NOT create a new socket! Use the one already open and logged in.
+   */
 
   send_delete_account_request(ctx);
   recv_delete_account_response(ctx);
 
+  /* Close the socket since the account no longer exists */
   close(ctx->active_sock_fd);
   ctx->active_sock_fd = -1;
 
-  ctx->state = STATE_EXITING;
+  /* Wipe local memory so we don't hold onto a ghost account */
+  memset(ctx->username, 0, sizeof(ctx->username));
+  memset(ctx->password, 0, sizeof(ctx->password));
+  ctx->account_id = 0;
+
+  /* Send the state machine back to the start (Login screen) instead of exiting
+   */
+  ctx->state = STATE_DISCONNECTED;
 }
 
 static void send_delete_account_request(client_context *ctx) {

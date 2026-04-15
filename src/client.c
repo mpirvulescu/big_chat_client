@@ -162,6 +162,9 @@ static int run_login_phase(client_context *ctx) {
   ui_screen_credentials(ctx, "Login");
   ui_set_status("Logging in...");
   network_execute_login(ctx);
+  ui_set_status("Fetching account details...");
+  network_fetch_own_account_id(ctx);
+
   return 0;
 }
 
