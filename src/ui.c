@@ -252,7 +252,7 @@ void ui_set_status(const char *fmt, ...) {
   va_list ap;
 
   werase(s_status_win);
-  wbkgd(s_status_win, (chtype)COLOR_PAIR(COLOR_PAIR_STATUS));
+  wbkgd(s_status_win, COLOR_PAIR(COLOR_PAIR_STATUS));
   wattron(s_status_win, COLOR_PAIR(COLOR_PAIR_STATUS));
   wmove(s_status_win, 0, 1);
 
@@ -271,7 +271,7 @@ void ui_set_status(const char *fmt, ...) {
 
 static void draw_title(const char *left, const char *right) {
   werase(s_title_win);
-  wbkgd(s_title_win, (chtype)COLOR_PAIR(COLOR_PAIR_TITLE));
+  wbkgd(s_title_win, COLOR_PAIR(COLOR_PAIR_TITLE));
   wattron(s_title_win, COLOR_PAIR(COLOR_PAIR_TITLE) | A_BOLD);
 
   mvwprintw(s_title_win, 0, 1, "%s", left);
