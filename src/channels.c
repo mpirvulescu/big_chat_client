@@ -80,8 +80,9 @@ void network_fetch_own_account_id(client_context *ctx) {
   uint32_t body_size = ntohl(resp_hdr.body);
 
   // fprintf(stderr,
-  //         "DEBUG: resp type=0x%02X status=0x%02X body_size=%u expected=%zu\n",
-  //         resp_hdr.type, resp_hdr.status, body_size, sizeof(big_user_info_t));
+  //         "DEBUG: resp type=0x%02X status=0x%02X body_size=%u
+  //         expected=%zu\n", resp_hdr.type, resp_hdr.status, body_size,
+  //         sizeof(big_user_info_t));
 
   if (resp_hdr.type != TYPE_GET_USER_INFO_RESPONSE ||
       resp_hdr.status != STATUS_OK) {

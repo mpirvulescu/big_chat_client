@@ -710,7 +710,7 @@ static void on_incoming_message(const char *sender_name, const char *text,
 static void on_history_message(const char *sender_name, const char *text,
                                const void *userdata, uint64_t timestamp,
                                uint8_t sender_id) {
-  const client_context *ctx = (const client_context *)userdata;
+  client_context *ctx = (client_context *)userdata; /* remove const */
   int is_mine = 0;
   char final_name[USERNAME_LENGTH];
 
@@ -718,14 +718,36 @@ static void on_history_message(const char *sender_name, const char *text,
   final_name[USERNAME_LENGTH - 1] = '\0';
 
   if (ctx->account_id != 0 && sender_id == ctx->account_id) {
+    /* Normal case: we already know our ID */
     is_mine = 1;
     strncpy(final_name, ctx->username, USERNAME_LENGTH - 1);
     final_name[USERNAME_LENGTH - 1] = '\0';
-  } else {
-    /* Not our current ID. Even if the username string matches exactly,
-       it belongs to a deleted ghost account. */
-    if (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
-      snprintf(final_name, USERNAME_LENGTH, "[%u]", (unsigned int)sender_id);
+  } else if (strncmp(sender_name, ctx->username, USERNAME_LENGTH) == 0) {
+    /* Name matches ours — this is our message, learn our ID from it */
+    is_mine = 1;
+    strncpy(final_name, ctx->username, USERNAME_LENGTH - 1);
+    final_name[USERNAME_LENGTH - 1] = '\0';
+
+    if (ctx->account_id == 0) {
+      /* First time we see our own name — rescue the ID */
+      ctx->account_id = sender_id;
+
+      /* Cache it so lookup_username stops making network requests for us */
+      ctx->username_cached[sender_id] = 1;
+      strncpy(ctx->username_cache[sender_id], ctx->username,
+              USERNAME_LENGTH - 1);
+      ctx->username_cache[sender_id][USERNAME_LENGTH - 1] = '\0';
+
+      /* Retroactively fix any history already pushed before we knew our ID */
+      int total = s_history_total < HISTORY_MAX ? s_history_total : HISTORY_MAX;
+      for (int i = 0; i < total; i++) {
+        chat_line_t *line = history_get(i);
+        if (line && line->sender_id == sender_id) {
+          line->is_mine = 1;
+          strncpy(line->sender_name, ctx->username, USERNAME_LENGTH - 1);
+          line->sender_name[USERNAME_LENGTH - 1] = '\0';
+        }
+      }
     }
   }
 

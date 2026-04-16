@@ -183,7 +183,8 @@ void network_execute_account_creation(client_context *ctx) {
 
 void network_execute_login(client_context *ctx) {
   // printf("\n--- Phase 3: Login ---\n");
-  //fprintf(stderr, "DEBUG: account_id at login start = %u\n", ctx->account_id);
+  // fprintf(stderr, "DEBUG: account_id at login start = %u\n",
+  // ctx->account_id);
 
   if (convert_address(ctx) != 0) {
     ctx->error_message = "Invalid Server IP format.\n";
