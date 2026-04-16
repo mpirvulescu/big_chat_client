@@ -4,11 +4,19 @@
 #include "types.h" // Provides the client_context name
 #include <stddef.h>
 
-#ifdef __FreeBSD__
-#include <sys/endian.h>
-#else
-#include <byteswap.h>
-#include <endian.h>
+/* --- Portable Endianness & Byte Swapping --- */
+#if defined(__linux__) || defined(__linux)
+    #include <endian.h>
+#elif defined(__FreeBSD__) || defined(__NetBSD__) || defined(__OpenBSD__)
+    #include <sys/endian.h>
+#elif defined(__APPLE__) || defined(__MACH__)
+    #include <libkern/OSByteOrder.h>
+    #define htobe16(x) OSSwapHostToBigInt16(x)
+    #define be16toh(x) OSSwapBigToHostInt16(x)
+    #define htobe32(x) OSSwapHostToBigInt32(x)
+    #define be32toh(x) OSSwapBigToHostInt32(x)
+    #define htobe64(x) OSSwapHostToBigInt64(x)
+    #define be64toh(x) OSSwapBigToHostInt64(x)
 #endif
 
 void cleanup_client(client_context *ctx);
