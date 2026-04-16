@@ -32,11 +32,6 @@
 #include "utils.h"
 #include <arpa/inet.h>
 #include <errno.h>
-#ifdef __FreeBSD__
-#include <sys/endian.h>
-#else
-#include <endian.h>
-#endif
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
